@@ -1,6 +1,6 @@
 use std::io::{stdin, stdout, IsTerminal};
 
-/// Check if both stdin and stdout are TTYs (required for interactive selection)
+/// Check if both stdin and stdout are TTYs.
 pub fn check_tty_requirements() -> bool {
     stdin().is_terminal() && stdout().is_terminal()
 }

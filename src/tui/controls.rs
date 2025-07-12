@@ -1,13 +1,18 @@
 use crate::fuzzy::FuzzyFinder;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+/// Actions that can be performed in response to key events.
 #[derive(Debug)]
 pub enum Action {
+    /// Continue processing
     Continue,
+    /// Exit the application
     Exit,
+    /// Select items and exit
     Select(Vec<String>),
 }
 
+/// Handle a key event and return the appropriate action.
 pub fn handle_key_event(key_event: &KeyEvent, fuzzy_finder: &mut FuzzyFinder) -> Action {
     match key_event.code {
         KeyCode::Char(c) => {

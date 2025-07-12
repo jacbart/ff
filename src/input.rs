@@ -1,6 +1,7 @@
 use std::fs;
 use std::io::{self, BufRead};
 
+/// Read input items from the specified source.
 pub fn read_input(source: &str) -> Result<Vec<String>, String> {
     match source {
         "stdin" => read_from_stdin(),
@@ -9,6 +10,7 @@ pub fn read_input(source: &str) -> Result<Vec<String>, String> {
     }
 }
 
+/// Process direct items provided as command line arguments.
 pub fn read_direct_items(items: Vec<String>) -> Result<Vec<String>, String> {
     if items.is_empty() {
         return Err("No items provided".to_string());
@@ -16,7 +18,7 @@ pub fn read_direct_items(items: Vec<String>) -> Result<Vec<String>, String> {
     Ok(items)
 }
 
-// Pure function for testing - processes content as if it came from stdin
+/// Process content as if it came from stdin.
 pub fn process_stdin_content(content: &str) -> Result<Vec<String>, String> {
     let mut items = Vec::new();
     for line in content.lines() {
@@ -31,7 +33,7 @@ pub fn process_stdin_content(content: &str) -> Result<Vec<String>, String> {
     Ok(items)
 }
 
-// Pure function for testing - processes content as if it came from a file
+/// Process content as if it came from a file.
 pub fn process_file_content(content: &str) -> Result<Vec<String>, String> {
     let items: Vec<String> = content
         .lines()

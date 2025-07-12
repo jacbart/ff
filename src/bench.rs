@@ -1,6 +1,7 @@
 use crate::fuzzy::FuzzyFinder;
 use std::time::Instant;
 
+/// Benchmark filtering performance with the given items and query.
 pub fn benchmark_filtering(
     items: Vec<String>,
     query: &str,
@@ -19,12 +20,12 @@ pub fn benchmark_filtering(
     (avg_time, fuzzy_finder.filtered_items)
 }
 
-// Pure function for calculating benchmark statistics
+/// Calculate average time per iteration from benchmark results.
 pub fn calculate_benchmark_stats(duration: std::time::Duration, iterations: usize) -> f64 {
     duration.as_micros() as f64 / iterations as f64
 }
 
-// Pure function for formatting benchmark results
+/// Format benchmark results as a string.
 pub fn format_benchmark_result(query: &str, avg_time: f64, result_count: usize) -> String {
     format!(
         "  Query '{}': {:.2}μs avg, {} results",
@@ -32,17 +33,17 @@ pub fn format_benchmark_result(query: &str, avg_time: f64, result_count: usize) 
     )
 }
 
-// Pure function for generating benchmark dataset sizes
+/// Get benchmark dataset sizes.
 pub fn get_benchmark_sizes() -> Vec<usize> {
     vec![100, 1000, 10000, 50000]
 }
 
-// Pure function for generating benchmark queries
+/// Get benchmark queries for testing.
 pub fn get_benchmark_queries() -> Vec<&'static str> {
     vec!["item", "item_1", "item_12", "item_123"]
 }
 
-// Pure function for generating file path benchmark queries
+/// Get file path benchmark queries.
 pub fn get_file_path_queries() -> Vec<&'static str> {
     vec![
         "src",         // Common prefix
@@ -58,30 +59,32 @@ pub fn get_file_path_queries() -> Vec<&'static str> {
     ]
 }
 
-// Pure function for generating realistic dataset queries
+/// Get realistic dataset queries.
 pub fn get_realistic_queries() -> Vec<&'static str> {
     vec!["src", "main", "rs", "test", "doc", "target"]
 }
 
-// Pure function for generating large dataset queries
+/// Get large dataset queries.
 pub fn get_large_dataset_queries() -> Vec<&'static str> {
     vec!["item", "item_1", "item_12", "item_123", "item_1234"]
 }
 
-// Pure function for generating parallel vs sequential sizes
+/// Get sizes for parallel vs sequential benchmarks.
 pub fn get_parallel_vs_sequential_sizes() -> Vec<usize> {
     vec![1000, 5000, 10000, 50000]
 }
 
-// Pure function for generating parallel vs sequential queries
+/// Get queries for parallel vs sequential benchmarks.
 pub fn get_parallel_vs_sequential_queries() -> Vec<&'static str> {
     vec!["item", "item_1", "item_12"]
 }
 
+/// Generate sequential items for benchmarking.
 pub fn generate_sequential_items(count: usize) -> Vec<String> {
     (0..count).map(|i| format!("item_{:05}", i)).collect()
 }
 
+/// Generate file paths for benchmarking.
 pub fn generate_file_paths(count: usize) -> Vec<String> {
     let extensions = ["rs", "toml", "md", "txt", "json", "yaml", "yml"];
     let directories = ["src", "tests", "docs", "examples", "target", "benches"];
@@ -99,7 +102,7 @@ pub fn generate_file_paths(count: usize) -> Vec<String> {
         .collect()
 }
 
-// Pure function for generating realistic dataset
+/// Generate a realistic dataset for benchmarking.
 pub fn generate_realistic_dataset() -> Vec<String> {
     vec![
         "src/main.rs".to_string(),
@@ -122,7 +125,7 @@ pub fn generate_realistic_dataset() -> Vec<String> {
     ]
 }
 
-// Pure function for running a single benchmark with given parameters
+/// Run a single benchmark with given parameters.
 pub fn run_single_benchmark(
     items: Vec<String>,
     query: &str,
@@ -141,6 +144,7 @@ pub fn run_single_benchmark(
     (avg_time, fuzzy_finder.filtered_items)
 }
 
+/// Benchmark parallel vs sequential filtering performance.
 pub fn benchmark_parallel_vs_sequential() {
     println!("\n=== Parallel vs Sequential Benchmark ===");
 
@@ -163,6 +167,7 @@ pub fn benchmark_parallel_vs_sequential() {
     }
 }
 
+/// Benchmark performance with different dataset sizes.
 pub fn benchmark_dataset_sizes() {
     println!("=== Dataset Size Benchmarks ===");
 
@@ -185,6 +190,7 @@ pub fn benchmark_dataset_sizes() {
     }
 }
 
+/// Benchmark performance with different query types.
 pub fn benchmark_query_types() {
     println!("\n=== Query Type Benchmarks ===");
 

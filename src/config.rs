@@ -1,12 +1,17 @@
 use std::env;
 
+/// Configuration for the fuzzy finder application.
 #[derive(Debug)]
 pub struct Config {
+    /// Input source identifier ("stdin", "direct", file path, or "benchmark")
     pub input_source: String,
+    /// Whether multi-select mode is enabled
     pub multi_select: bool,
+    /// Direct items provided as command line arguments
     pub direct_items: Option<Vec<String>>,
 }
 
+/// Parse command line arguments into a Config struct.
 pub fn parse_args_from(args: &[String]) -> Result<Config, String> {
     if args.iter().any(|arg| arg == "-h" || arg == "--help") {
         print_usage();
@@ -60,11 +65,13 @@ pub fn parse_args_from(args: &[String]) -> Result<Config, String> {
     })
 }
 
+/// Parse command line arguments from the environment.
 pub fn parse_args() -> Result<Config, String> {
     let args: Vec<String> = env::args().collect();
     parse_args_from(&args)
 }
 
+/// Print usage information for the command line tool.
 pub fn print_usage() {
     eprintln!("Usage: ff <input-source> [--multi-select] [--height <lines>] [--height-percentage <percent>]");
     eprintln!("   or: ff <item1> [item2] [item3] ... [--multi-select] [--height <lines>] [--height-percentage <percent>]");

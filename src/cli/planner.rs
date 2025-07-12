@@ -1,19 +1,31 @@
+/// Actions that can be performed by the CLI application.
 #[derive(Debug, PartialEq)]
 pub enum CliAction {
+    /// Show version information
     ShowVersion,
+    /// Show help information
     ShowHelp,
+    /// Run benchmarks
     RunBenchmark {
+        /// Whether multi-select mode is enabled
         multi_select: bool,
     },
+    /// Run the terminal user interface
     RunTui {
+        /// Items to search through
         items: Vec<String>,
+        /// Whether multi-select mode is enabled
         multi_select: bool,
+        /// Fixed height in lines
         height: Option<u16>,
+        /// Height as percentage of terminal
         height_percentage: Option<f32>,
     },
+    /// Error with message
     Error(String),
 }
 
+/// Plan the CLI action based on command line arguments.
 pub fn plan_cli_action(args: &[String]) -> CliAction {
     if args
         .iter()

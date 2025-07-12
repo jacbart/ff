@@ -9,7 +9,7 @@ use crate::config;
 use crate::get_build_info;
 use crate::tui::{run_tui, run_tui_with_config, TuiConfig};
 
-/// Pure function for reading items from a file
+/// Read items from a file.
 pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
     match fs::read_to_string(file_path) {
         Ok(content) => {
@@ -24,12 +24,12 @@ pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
     }
 }
 
-/// Pure function for determining if a path looks like a file path
+/// Check if a path looks like a file path.
 pub fn looks_like_file_path(path: &str) -> bool {
     path.contains('/') || path.contains('\\') || path.contains('.')
 }
 
-/// Pure function for processing items (either from file or direct)
+/// Process items from file or direct input.
 pub fn process_items(items: Vec<String>) -> Result<Vec<String>, String> {
     // If items is a single file path, read from file
     let processed_items = if items.len() == 1 && looks_like_file_path(&items[0]) {
@@ -45,7 +45,7 @@ pub fn process_items(items: Vec<String>) -> Result<Vec<String>, String> {
     Ok(processed_items)
 }
 
-/// Pure function for validating TTY requirements
+/// Validate that TTY requirements are met for interactive mode.
 pub fn validate_tty_requirements() -> Result<(), String> {
     if !check_tty_requirements() {
         return Err("Interactive selection requires a TTY.".to_string());
@@ -53,12 +53,12 @@ pub fn validate_tty_requirements() -> Result<(), String> {
     Ok(())
 }
 
-/// Pure function for handling TUI results
+/// Handle TUI results.
 pub fn handle_tui_results(selected: Vec<String>) -> Vec<String> {
     selected
 }
 
-/// Pure function for running TUI with error handling
+/// Run TUI with validation and error handling.
 pub fn run_tui_with_validation(
     items: Vec<String>,
     multi_select: bool,
@@ -73,7 +73,7 @@ pub fn run_tui_with_validation(
     }
 }
 
-/// Pure function for running TUI with height configuration
+/// Run TUI with height configuration and validation.
 pub fn run_tui_with_height_validation(
     items: Vec<String>,
     multi_select: bool,
@@ -99,42 +99,6 @@ pub fn run_tui_with_height_validation(
 }
 
 /// Run the CLI application.
-///
-/// This function handles all CLI-specific logic including:
-/// - Argument parsing
-/// - Input source detection (file, stdin, direct items)
-/// - Multi-select validation
-/// - Benchmark mode
-/// - Version information
-///
-/// # Usage
-///
-/// The CLI supports several input modes:
-///
-/// - **File input**: `ff file.txt`
-/// - **Stdin input**: `cat file.txt | ff`
-/// - **Direct items**: `ff item1 item2 item3`
-/// - **Multi-select**: `ff file.txt -m` or `ff file.txt --multi-select`
-/// - **Version info**: `ff --version` or `ff -V`
-///
-/// # Examples
-///
-/// ```bash
-/// # Single select from file
-/// ff items.txt
-///
-/// # Multi-select from file
-/// ff items.txt -m
-///
-/// # Direct items
-/// ff apple banana cherry -m
-///
-/// # From stdin (single select only)
-/// echo "apple\nbanana" | ff
-///
-/// # Version information
-/// ff --version
-/// ```
 pub fn cli_main() {
     let args: Vec<String> = env::args().collect();
     match plan_cli_action(&args) {
@@ -155,6 +119,10 @@ pub fn cli_main() {
         } => match run_tui_with_height_validation(items, multi_select, height, height_percentage) {
             Ok(selected) => {
                 if !selected.is_empty() {
+                    // Move cursor to column 0 before printing results
+                    use crossterm::{cursor, execute};
+                    let _ = execute!(std::io::stdout(), cursor::MoveTo(0, 0));
+
                     for item in selected {
                         println!("{}", item);
                     }

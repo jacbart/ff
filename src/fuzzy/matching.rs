@@ -1,6 +1,7 @@
 use crate::fuzzy::finder::FuzzyFinder;
 use rayon::prelude::*;
 
+/// Check if an item matches a query using fuzzy matching.
 pub fn fuzzy_match(item: &str, query: &str) -> bool {
     if query.is_empty() {
         return true;
@@ -22,7 +23,7 @@ pub fn fuzzy_match(item: &str, query: &str) -> bool {
     query_chars.peek().is_none()
 }
 
-/// Find the positions of matched characters for highlighting (case-insensitive)
+/// Find the positions of matched characters for highlighting.
 pub fn find_match_positions(item: &str, query: &str) -> Vec<usize> {
     if query.is_empty() {
         return vec![];
@@ -49,6 +50,7 @@ pub fn find_match_positions(item: &str, query: &str) -> Vec<usize> {
     positions
 }
 
+/// Filter items sequentially using fuzzy matching.
 pub fn sequential_filter(finder: &FuzzyFinder, query_lower: &str) -> Vec<String> {
     let mut results = Vec::new();
     for (i, item) in finder.items.iter().enumerate() {
@@ -59,6 +61,7 @@ pub fn sequential_filter(finder: &FuzzyFinder, query_lower: &str) -> Vec<String>
     results
 }
 
+/// Filter items in parallel using fuzzy matching.
 pub fn parallel_filter(finder: &FuzzyFinder, query_lower: &str) -> Vec<String> {
     finder
         .items

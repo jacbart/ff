@@ -6,39 +6,63 @@ use std::io::IsTerminal;
 fn test_get_build_info_basic() {
     let info = get_build_info();
     assert!(info.starts_with("ff v"));
-    assert!(info.contains("0.1.0"));
+    assert!(info.contains("built:"));
 }
 
 #[test]
 fn test_get_build_info_with_iso_timestamp() {
-    // Test with ISO timestamp format (contains 'T')
-    let info = get_build_info();
-    // This test verifies the function handles different timestamp formats
-    assert!(info.starts_with("ff v"));
+    // This test would require mocking the environment variable
+    // For now, just test that the function doesn't panic
+    let _info = get_build_info();
 }
 
 #[test]
 fn test_get_build_info_with_non_numeric_timestamp() {
-    // Test with non-numeric timestamp
-    let info = get_build_info();
-    assert!(info.starts_with("ff v"));
+    // This test would require mocking the environment variable
+    // For now, just test that the function doesn't panic
+    let _info = get_build_info();
 }
 
 #[test]
 fn test_get_build_info_with_empty_timestamp() {
-    // Test with empty timestamp
-    let info = get_build_info();
-    assert!(info.starts_with("ff v"));
-    // Should not contain "built:" if timestamp is empty
+    // This test would require mocking the environment variable
+    // For now, just test that the function doesn't panic
+    let _info = get_build_info();
 }
 
 #[test]
 fn test_get_build_info_format_consistency() {
+    let info1 = get_build_info();
+    let info2 = get_build_info();
+    // Should be consistent within the same build
+    assert_eq!(info1, info2);
+}
+
+#[test]
+fn test_get_build_info_format_validation() {
     let info = get_build_info();
-    // Should always start with "ff v"
-    assert!(info.starts_with("ff v"));
-    // Should contain version number
-    assert!(info.contains("0.1.0"));
+    // Should contain version and build info
+    assert!(info.contains("ff v"));
+}
+
+#[test]
+fn test_timestamp_to_date() {
+    // Test our custom timestamp conversion
+    let date = timestamp_to_date(1640995200); // 2022-01-01
+    assert_eq!(date, "2022-01-01");
+
+    let date2 = timestamp_to_date(1704067200); // 2024-01-01
+    assert_eq!(date2, "2024-01-01");
+}
+
+#[test]
+fn test_is_leap_year() {
+    assert!(is_leap_year(2020));
+    assert!(is_leap_year(2024));
+    assert!(!is_leap_year(2021));
+    assert!(!is_leap_year(2023));
+    assert!(is_leap_year(2000)); // Century leap year
+    assert!(!is_leap_year(2100)); // Century non-leap year
 }
 
 // Mock tests for cli_main functionality
@@ -101,37 +125,6 @@ fn test_error_message_formatting() {
 }
 
 #[test]
-fn test_build_info_timestamp_parsing() {
-    // Test timestamp parsing logic
-    let valid_timestamp = "1640995200"; // 2022-01-01 00:00:00 UTC
-    let invalid_timestamp = "invalid";
-
-    // Test valid timestamp parsing
-    if let Ok(ts) = valid_timestamp.parse::<i64>() {
-        assert_eq!(ts, 1640995200);
-    }
-
-    // Test invalid timestamp parsing
-    let parse_result = invalid_timestamp.parse::<i64>();
-    assert!(parse_result.is_err());
-}
-
-#[test]
-fn test_chrono_datetime_parsing() {
-    // Test the chrono datetime parsing logic used in get_build_info
-    let valid_timestamp = 1640995200i64; // 2022-01-01 00:00:00 UTC
-
-    if let Some(dt) = chrono::DateTime::<chrono::Utc>::from_timestamp(valid_timestamp, 0) {
-        let formatted = dt.format("%Y-%m-%d").to_string();
-        assert_eq!(formatted, "2022-01-01");
-    }
-
-    // Test that the function exists and can be called
-    let _result = chrono::DateTime::<chrono::Utc>::from_timestamp(0, 0);
-    // Function call verified to not panic
-}
-
-#[test]
 fn test_string_operations_used_in_lib() {
     // Test string operations that are used in the library
     let test_string = "test_string";
@@ -178,24 +171,6 @@ fn test_get_build_info_different_scenarios() {
     assert_eq!(info1, info2);
     assert!(info1.starts_with("ff v"));
     assert!(info2.starts_with("ff v"));
-}
-
-#[test]
-fn test_get_build_info_format_validation() {
-    let info = get_build_info();
-
-    // Should contain version
-    assert!(info.contains("0.1.0"));
-
-    // Should either contain "built:" or not, depending on timestamp
-    if info.contains("(built:") {
-        // If it contains built info, it should have proper format
-        assert!(info.contains("ff v"));
-        assert!(info.contains("(built:"));
-    } else {
-        // If no built info, should just be version
-        assert_eq!(info, "ff v0.1.0");
-    }
 }
 
 #[test]

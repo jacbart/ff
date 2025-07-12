@@ -1,19 +1,29 @@
 use crate::fuzzy::matching::{parallel_filter, sequential_filter};
 use std::collections::HashMap;
 
+/// Fuzzy finder for interactive item selection.
 #[derive(Debug)]
 pub struct FuzzyFinder {
+    /// All available items
     pub items: Vec<String>,
+    /// Currently filtered items based on query
     pub filtered_items: Vec<String>,
+    /// Indices of selected items in multi-select mode
     pub selected_indices: Vec<usize>,
+    /// Current search query
     pub query: String,
+    /// Current cursor position in filtered items
     pub cursor_position: usize,
+    /// Whether multi-select mode is enabled
     pub multi_select: bool,
+    /// Lowercase versions of items for case-insensitive matching
     pub lowercase_items: Vec<String>,
+    /// Cache for query results to improve performance
     pub query_cache: HashMap<String, Vec<String>>,
 }
 
 impl FuzzyFinder {
+    /// Create a new fuzzy finder with the given items.
     pub fn new(items: Vec<String>, multi_select: bool) -> Self {
         let lowercase_items: Vec<String> = items.iter().map(|item| item.to_lowercase()).collect();
         Self {
@@ -28,6 +38,7 @@ impl FuzzyFinder {
         }
     }
 
+    /// Update the filtered items based on the current query.
     pub fn update_filter(&mut self) {
         if self.query.is_empty() {
             self.filtered_items = self.items.clone();
@@ -52,6 +63,7 @@ impl FuzzyFinder {
         }
     }
 
+    /// Move the cursor up or down in the filtered items.
     pub fn move_cursor(&mut self, direction: i32) {
         let len = self.filtered_items.len();
         if len == 0 {
@@ -67,6 +79,7 @@ impl FuzzyFinder {
         }
     }
 
+    /// Toggle selection of the current item in multi-select mode.
     pub fn toggle_selection(&mut self) {
         if self.filtered_items.is_empty() {
             return;
@@ -85,6 +98,7 @@ impl FuzzyFinder {
         }
     }
 
+    /// Get the currently selected items.
     pub fn get_selected_items(&self) -> Vec<String> {
         if self.multi_select {
             self.selected_indices

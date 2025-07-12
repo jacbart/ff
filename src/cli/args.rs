@@ -1,18 +1,18 @@
 use std::path::Path;
 
-/// Check if any version flag is present in the arguments
+/// Check if any version flag is present in the arguments.
 pub fn has_version_flag(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--version" || arg == "-V" || arg == "-v")
 }
 
-/// Check if any multi-select flag is present in the arguments
+/// Check if any multi-select flag is present in the arguments.
 pub fn has_multi_select_flag(args: &[String]) -> bool {
     args.iter()
         .any(|arg| arg == "--multi-select" || arg == "-m")
 }
 
-/// Check if a string represents a file path (not a special flag)
+/// Check if a string represents a file path.
 pub fn is_file_path(arg: &str) -> bool {
     arg != "--multi-select" && arg != "--help" && arg != "-h" && Path::new(arg).exists()
 }

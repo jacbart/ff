@@ -1,9 +1,16 @@
+use std::time::{SystemTime, UNIX_EPOCH};
+
 fn main() {
     // Set basic build information
     println!(
         "cargo:rustc-env=VERGEN_BUILD_TIMESTAMP={}",
-        std::env::var("SOURCE_DATE_EPOCH")
-            .unwrap_or_else(|_| chrono::Utc::now().timestamp().to_string())
+        std::env::var("SOURCE_DATE_EPOCH").unwrap_or_else(|_| {
+            (SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64)
+                .to_string()
+        })
     );
 
     println!(
