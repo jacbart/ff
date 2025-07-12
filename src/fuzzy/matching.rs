@@ -22,15 +22,18 @@ pub fn fuzzy_match(item: &str, query: &str) -> bool {
     query_chars.peek().is_none()
 }
 
-/// Find the positions of matched characters for highlighting
+/// Find the positions of matched characters for highlighting (case-insensitive)
 pub fn find_match_positions(item: &str, query: &str) -> Vec<usize> {
     if query.is_empty() {
         return vec![];
     }
     
+    let query_lower = query.to_lowercase();
+    let item_lower = item.to_lowercase();
+    
     let mut positions = Vec::new();
-    let mut query_chars = query.chars().peekable();
-    let mut item_chars = item.chars().enumerate();
+    let mut query_chars = query_lower.chars().peekable();
+    let mut item_chars = item_lower.chars().enumerate();
     
     while let Some(query_char) = query_chars.peek() {
         if let Some((pos, item_char)) = item_chars.next() {
