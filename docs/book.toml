@@ -1,0 +1,17 @@
+[book]
+authors = ["FF Contributors"]
+language = "en"
+multilingual = false
+src = "src"
+title = "FF - Fast Fuzzy Finder"
+
+[output.html]
+git-repository-url = "https://github.com/jacbart/ff"
+git-repository-icon = "fa-github"
+git-commit-url-format = "https://github.com/jacbart/ff/commit/{commit}"
+git-blob-url-format = "https://github.com/jacbart/ff/blob/{commit}/{path}"
+git-file-url-format = "https://github.com/jacbart/ff/blob/{commit}/{path}"
+
+[output.html.fold]
+enable = true
+level = 0 
