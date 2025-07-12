@@ -13,7 +13,6 @@ build = "build.rs"
 [dependencies]
 crossterm = "0.29"
 ratatui = "0.29"
-atty = "0.2"
 rayon = "1.10"
 chrono = "0.4"
 

@@ -1,8 +1,8 @@
-use atty::Stream;
+use std::io::{stdin, stdout, IsTerminal};
 
 /// Check if both stdin and stdout are TTYs (required for interactive selection)
 pub fn check_tty_requirements() -> bool {
-    atty::is(Stream::Stdin) && atty::is(Stream::Stdout)
+    stdin().is_terminal() && stdout().is_terminal()
 }
 
 #[cfg(test)]
@@ -11,10 +11,9 @@ mod tests {
 
     #[test]
     fn test_check_tty_requirements() {
-        // This test checks that the function doesn't panic
         // The actual result depends on the test environment
-        let result = check_tty_requirements();
-        assert!(result == true || result == false); // Should be a boolean
+        let _result = check_tty_requirements();
+        // Function should not panic
     }
 
     #[test]
@@ -26,20 +25,18 @@ mod tests {
     }
 
     #[test]
-    fn test_atty_streams() {
+    fn test_tty_streams() {
         // Test that we can check individual streams
-        let stdin_is_tty = atty::is(Stream::Stdin);
-        let stdout_is_tty = atty::is(Stream::Stdout);
-        
+        let stdin_is_tty = stdin().is_terminal();
+        let stdout_is_tty = stdout().is_terminal();
+
         // Both should be boolean values
-        assert!(stdin_is_tty == true || stdin_is_tty == false);
-        assert!(stdout_is_tty == true || stdout_is_tty == false);
-        
+        let _stdin_is_tty = stdin_is_tty;
+        let _stdout_is_tty = stdout_is_tty;
+
         // The combined result should match our function
         let expected = stdin_is_tty && stdout_is_tty;
         let actual = check_tty_requirements();
         assert_eq!(expected, actual);
     }
 }
-
- 

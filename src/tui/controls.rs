@@ -1,5 +1,5 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::fuzzy::FuzzyFinder;
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Debug)]
 pub enum Action {
@@ -13,7 +13,10 @@ pub fn handle_key_event(key_event: &KeyEvent, fuzzy_finder: &mut FuzzyFinder) ->
         KeyCode::Char(c) => {
             if c == 'q' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
                 Action::Exit
-            } else if c == ' ' && fuzzy_finder.multi_select && !fuzzy_finder.filtered_items.is_empty() {
+            } else if c == ' '
+                && fuzzy_finder.multi_select
+                && !fuzzy_finder.filtered_items.is_empty()
+            {
                 // Space bar toggles selection in multi-select mode
                 fuzzy_finder.toggle_selection();
                 Action::Continue
@@ -52,7 +55,11 @@ pub fn handle_key_event(key_event: &KeyEvent, fuzzy_finder: &mut FuzzyFinder) ->
                 } else {
                     // Single select - get the selected item and exit
                     let selected_item = &fuzzy_finder.filtered_items[fuzzy_finder.cursor_position];
-                    if let Some(original_index) = fuzzy_finder.items.iter().position(|item| item == selected_item) {
+                    if let Some(original_index) = fuzzy_finder
+                        .items
+                        .iter()
+                        .position(|item| item == selected_item)
+                    {
                         let selected_items = vec![fuzzy_finder.items[original_index].clone()];
                         Action::Select(selected_items)
                     } else {
@@ -63,10 +70,8 @@ pub fn handle_key_event(key_event: &KeyEvent, fuzzy_finder: &mut FuzzyFinder) ->
                 Action::Exit
             }
         }
-        KeyCode::Esc => {
-            Action::Exit
-        }
-        _ => Action::Continue
+        KeyCode::Esc => Action::Exit,
+        _ => Action::Continue,
     }
 }
 
@@ -80,7 +85,7 @@ mod tests {
         let continue_action = Action::Continue;
         let exit_action = Action::Exit;
         let select_action = Action::Select(vec!["item".to_string()]);
-        
+
         assert!(matches!(continue_action, Action::Continue));
         assert!(matches!(exit_action, Action::Exit));
         assert!(matches!(select_action, Action::Select(_)));
@@ -93,7 +98,7 @@ mod tests {
             crossterm::event::KeyCode::Char('a'),
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
         assert_eq!(finder.query, "a");
@@ -106,7 +111,7 @@ mod tests {
             crossterm::event::KeyCode::Char('q'),
             crossterm::event::KeyModifiers::CONTROL,
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Exit));
     }
@@ -119,7 +124,7 @@ mod tests {
             crossterm::event::KeyCode::Char(' '),
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
     }
@@ -132,7 +137,7 @@ mod tests {
             crossterm::event::KeyCode::Char(' '),
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
         assert_eq!(finder.query, " ");
@@ -146,7 +151,7 @@ mod tests {
             crossterm::event::KeyCode::Backspace,
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
         assert_eq!(finder.query, "ab");
@@ -160,7 +165,7 @@ mod tests {
             crossterm::event::KeyCode::Backspace,
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
         assert_eq!(finder.query, "");
@@ -174,7 +179,7 @@ mod tests {
             crossterm::event::KeyCode::Up,
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
     }
@@ -187,7 +192,7 @@ mod tests {
             crossterm::event::KeyCode::Down,
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
     }
@@ -200,7 +205,7 @@ mod tests {
             crossterm::event::KeyCode::Tab,
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
     }
@@ -213,7 +218,7 @@ mod tests {
             crossterm::event::KeyCode::Tab,
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
     }
@@ -226,7 +231,7 @@ mod tests {
             crossterm::event::KeyCode::Enter,
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Select(_)));
     }
@@ -239,7 +244,7 @@ mod tests {
             crossterm::event::KeyCode::Enter,
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Select(_)));
     }
@@ -253,7 +258,7 @@ mod tests {
             crossterm::event::KeyCode::Enter,
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Exit));
     }
@@ -265,7 +270,7 @@ mod tests {
             crossterm::event::KeyCode::Esc,
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Exit));
     }
@@ -277,7 +282,7 @@ mod tests {
             crossterm::event::KeyCode::F(1),
             crossterm::event::KeyModifiers::empty(),
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
     }
@@ -289,9 +294,9 @@ mod tests {
             crossterm::event::KeyCode::Char('a'),
             crossterm::event::KeyModifiers::SHIFT,
         );
-        
+
         let action = handle_key_event(&key_event, &mut finder);
         assert!(matches!(action, Action::Continue));
         assert_eq!(finder.query, "a"); // The key event handling doesn't auto-convert case
     }
-} 
+}

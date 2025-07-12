@@ -1,13 +1,13 @@
 use std::env;
-use std::process;
 use std::fs;
+use std::process;
 
-use crate::config;
 use crate::bench;
-use crate::tui::{run_tui, run_tui_with_config, TuiConfig};
-use crate::get_build_info;
-use crate::cli::tty::check_tty_requirements;
 use crate::cli::planner::{plan_cli_action, CliAction};
+use crate::cli::tty::check_tty_requirements;
+use crate::config;
+use crate::get_build_info;
+use crate::tui::{run_tui, run_tui_with_config, TuiConfig};
 
 /// Pure function for reading items from a file
 pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
@@ -20,7 +20,7 @@ pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
                 .collect();
             Ok(items)
         }
-        Err(e) => Err(format!("Failed to read file: {}", e))
+        Err(e) => Err(format!("Failed to read file: {}", e)),
     }
 }
 
@@ -37,11 +37,11 @@ pub fn process_items(items: Vec<String>) -> Result<Vec<String>, String> {
     } else {
         items
     };
-    
+
     if processed_items.is_empty() {
         return Err("No items to search through".to_string());
     }
-    
+
     Ok(processed_items)
 }
 
@@ -59,28 +59,31 @@ pub fn handle_tui_results(selected: Vec<String>) -> Vec<String> {
 }
 
 /// Pure function for running TUI with error handling
-pub fn run_tui_with_validation(items: Vec<String>, multi_select: bool) -> Result<Vec<String>, String> {
+pub fn run_tui_with_validation(
+    items: Vec<String>,
+    multi_select: bool,
+) -> Result<Vec<String>, String> {
     let processed_items = process_items(items)?;
-    
+
     validate_tty_requirements()?;
-    
+
     match run_tui(processed_items, multi_select) {
         Ok(selected) => Ok(handle_tui_results(selected)),
-        Err(err) => Err(format!("TUI error: {}", err))
+        Err(err) => Err(format!("TUI error: {}", err)),
     }
 }
 
 /// Pure function for running TUI with height configuration
 pub fn run_tui_with_height_validation(
-    items: Vec<String>, 
-    multi_select: bool, 
-    height: Option<u16>, 
-    height_percentage: Option<f32>
+    items: Vec<String>,
+    multi_select: bool,
+    height: Option<u16>,
+    height_percentage: Option<f32>,
 ) -> Result<Vec<String>, String> {
     let processed_items = process_items(items)?;
-    
+
     validate_tty_requirements()?;
-    
+
     let config = if let Some(h) = height {
         TuiConfig::with_height(h)
     } else if let Some(p) = height_percentage {
@@ -88,47 +91,47 @@ pub fn run_tui_with_height_validation(
     } else {
         TuiConfig::fullscreen()
     };
-    
+
     match run_tui_with_config(processed_items, multi_select, config) {
         Ok(selected) => Ok(handle_tui_results(selected)),
-        Err(err) => Err(format!("TUI error: {}", err))
+        Err(err) => Err(format!("TUI error: {}", err)),
     }
 }
 
 /// Run the CLI application.
-/// 
+///
 /// This function handles all CLI-specific logic including:
 /// - Argument parsing
 /// - Input source detection (file, stdin, direct items)
 /// - Multi-select validation
 /// - Benchmark mode
 /// - Version information
-/// 
+///
 /// # Usage
-/// 
+///
 /// The CLI supports several input modes:
-/// 
+///
 /// - **File input**: `ff file.txt`
 /// - **Stdin input**: `cat file.txt | ff`
 /// - **Direct items**: `ff item1 item2 item3`
 /// - **Multi-select**: `ff file.txt -m` or `ff file.txt --multi-select`
 /// - **Version info**: `ff --version` or `ff -V`
-/// 
+///
 /// # Examples
-/// 
+///
 /// ```bash
 /// # Single select from file
 /// ff items.txt
-/// 
+///
 /// # Multi-select from file
 /// ff items.txt -m
-/// 
+///
 /// # Direct items
 /// ff apple banana cherry -m
-/// 
+///
 /// # From stdin (single select only)
 /// echo "apple\nbanana" | ff
-/// 
+///
 /// # Version information
 /// ff --version
 /// ```
@@ -144,21 +147,24 @@ pub fn cli_main() {
         CliAction::RunBenchmark { multi_select: _ } => {
             bench::run_all_benchmarks();
         }
-        CliAction::RunTui { items, multi_select, height, height_percentage } => {
-            match run_tui_with_height_validation(items, multi_select, height, height_percentage) {
-                Ok(selected) => {
-                    if !selected.is_empty() {
-                        for item in selected {
-                            println!("{}", item);
-                        }
+        CliAction::RunTui {
+            items,
+            multi_select,
+            height,
+            height_percentage,
+        } => match run_tui_with_height_validation(items, multi_select, height, height_percentage) {
+            Ok(selected) => {
+                if !selected.is_empty() {
+                    for item in selected {
+                        println!("{}", item);
                     }
                 }
-                Err(err) => {
-                    eprintln!("Error: {}", err);
-                    process::exit(1);
-                }
             }
-        }
+            Err(err) => {
+                eprintln!("Error: {}", err);
+                process::exit(1);
+            }
+        },
         CliAction::Error(msg) => {
             eprintln!("Error: {}", msg);
             config::print_usage();
@@ -188,12 +194,12 @@ mod tests {
         // Create a temporary file for testing
         let temp_file = PathBuf::from("test_items.txt");
         fs::write(&temp_file, "item1\nitem2\n\nitem3\n").unwrap();
-        
+
         let result = read_items_from_file("test_items.txt");
         assert!(result.is_ok());
         let items = result.unwrap();
         assert_eq!(items, vec!["item1", "item2", "item3"]);
-        
+
         // Clean up
         fs::remove_file(&temp_file).unwrap();
     }
@@ -203,12 +209,12 @@ mod tests {
         // Create a temporary empty file
         let temp_file = PathBuf::from("test_empty.txt");
         fs::write(&temp_file, "").unwrap();
-        
+
         let result = read_items_from_file("test_empty.txt");
         assert!(result.is_ok());
         let items = result.unwrap();
         assert_eq!(items, Vec::<String>::new());
-        
+
         // Clean up
         fs::remove_file(&temp_file).unwrap();
     }
@@ -218,12 +224,12 @@ mod tests {
         // Create a temporary file with whitespace
         let temp_file = PathBuf::from("test_whitespace.txt");
         fs::write(&temp_file, "  item1  \n\n  item2  \n  \n").unwrap();
-        
+
         let result = read_items_from_file("test_whitespace.txt");
         assert!(result.is_ok());
         let items = result.unwrap();
         assert_eq!(items, vec!["item1", "item2"]);
-        
+
         // Clean up
         fs::remove_file(&temp_file).unwrap();
     }
@@ -256,12 +262,12 @@ mod tests {
         // Create a temporary file
         let temp_file = PathBuf::from("test_process.txt");
         fs::write(&temp_file, "file_item1\nfile_item2").unwrap();
-        
+
         let items = vec!["test_process.txt".to_string()];
         let result = process_items(items);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), vec!["file_item1", "file_item2"]);
-        
+
         // Clean up
         fs::remove_file(&temp_file).unwrap();
     }
@@ -293,7 +299,7 @@ mod tests {
         // This test depends on the actual TTY check implementation
         // We can't easily mock this in a unit test, so we just test that it doesn't panic
         let _result = validate_tty_requirements();
-        assert!(true); // If we get here, it didn't panic
+        // If we get here, it didn't panic
     }
 
     #[test]
@@ -313,9 +319,9 @@ mod tests {
         // The TUI requires interactive input which we can't test in automated tests
         let processed_items = process_items(items).unwrap();
         assert_eq!(processed_items, vec!["item1", "item2"]);
-        
+
         // Test that validate_tty_requirements doesn't panic
         let _result = validate_tty_requirements();
-        assert!(true); // If we get here, it didn't panic
+        // If we get here, it didn't panic
     }
-} 
+}

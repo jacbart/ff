@@ -19,7 +19,7 @@ pub fn read_direct_items(items: Vec<String>) -> Result<Vec<String>, String> {
 // Pure function for testing - processes content as if it came from stdin
 pub fn process_stdin_content(content: &str) -> Result<Vec<String>, String> {
     let mut items = Vec::new();
-    for (_line_num, line) in content.lines().enumerate() {
+    for line in content.lines() {
         let trimmed = line.trim();
         if !trimmed.is_empty() {
             items.push(trimmed.to_string());
@@ -58,7 +58,11 @@ fn read_from_stdin() -> Result<Vec<String>, String> {
                 }
             }
             Err(err) => {
-                return Err(format!("Error reading line {} from stdin: {}", line_num + 1, err));
+                return Err(format!(
+                    "Error reading line {} from stdin: {}",
+                    line_num + 1,
+                    err
+                ));
             }
         }
     }
@@ -207,7 +211,10 @@ mod tests {
         let source = "direct";
         let result = read_input(source);
         assert!(result.is_err());
-        assert_eq!(result.unwrap_err(), "Direct items should be handled by the caller");
+        assert_eq!(
+            result.unwrap_err(),
+            "Direct items should be handled by the caller"
+        );
     }
 
     #[test]
@@ -215,11 +222,11 @@ mod tests {
         // Create a temporary file for testing
         let temp_file = PathBuf::from("test_input_file.txt");
         fs::write(&temp_file, "file_item1\nfile_item2").unwrap();
-        
+
         let result = read_input("test_input_file.txt");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), vec!["file_item1", "file_item2"]);
-        
+
         // Clean up
         fs::remove_file(&temp_file).unwrap();
     }
@@ -236,11 +243,11 @@ mod tests {
         // Create a temporary empty file
         let temp_file = PathBuf::from("test_empty_file.txt");
         fs::write(&temp_file, "").unwrap();
-        
+
         let result = read_input("test_empty_file.txt");
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "No items found in file");
-        
+
         // Clean up
         fs::remove_file(&temp_file).unwrap();
     }
@@ -250,11 +257,11 @@ mod tests {
         // Create a temporary file with only whitespace
         let temp_file = PathBuf::from("test_whitespace_file.txt");
         fs::write(&temp_file, "   \n  \n  \n").unwrap();
-        
+
         let result = read_input("test_whitespace_file.txt");
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "No items found in file");
-        
+
         // Clean up
         fs::remove_file(&temp_file).unwrap();
     }
@@ -264,11 +271,11 @@ mod tests {
         // Create a temporary file with mixed content
         let temp_file = PathBuf::from("test_mixed_file.txt");
         fs::write(&temp_file, "  item1  \n\n  item2  \n  \n  item3  ").unwrap();
-        
+
         let result = read_input("test_mixed_file.txt");
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), vec!["item1", "item2", "item3"]);
-        
+
         // Clean up
         fs::remove_file(&temp_file).unwrap();
     }
@@ -279,4 +286,4 @@ mod tests {
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Error reading file"));
     }
-} 
+}

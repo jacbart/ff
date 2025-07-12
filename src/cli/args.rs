@@ -2,12 +2,14 @@ use std::path::Path;
 
 /// Check if any version flag is present in the arguments
 pub fn has_version_flag(args: &[String]) -> bool {
-    args.iter().any(|arg| arg == "--version" || arg == "-V" || arg == "-v")
+    args.iter()
+        .any(|arg| arg == "--version" || arg == "-V" || arg == "-v")
 }
 
 /// Check if any multi-select flag is present in the arguments
 pub fn has_multi_select_flag(args: &[String]) -> bool {
-    args.iter().any(|arg| arg == "--multi-select" || arg == "-m")
+    args.iter()
+        .any(|arg| arg == "--multi-select" || arg == "-m")
 }
 
 /// Check if a string represents a file path (not a special flag)
@@ -47,7 +49,11 @@ mod tests {
 
     #[test]
     fn test_has_version_flag_mixed() {
-        let args = vec!["other".to_string(), "--version".to_string(), "file.txt".to_string()];
+        let args = vec![
+            "other".to_string(),
+            "--version".to_string(),
+            "file.txt".to_string(),
+        ];
         assert!(has_version_flag(&args));
     }
 
@@ -77,7 +83,11 @@ mod tests {
 
     #[test]
     fn test_has_multi_select_flag_mixed() {
-        let args = vec!["other".to_string(), "--multi-select".to_string(), "file.txt".to_string()];
+        let args = vec![
+            "other".to_string(),
+            "--multi-select".to_string(),
+            "file.txt".to_string(),
+        ];
         assert!(has_multi_select_flag(&args));
     }
 
@@ -105,9 +115,9 @@ mod tests {
         // Create a temporary file for testing
         let temp_file = PathBuf::from("test_temp_file.txt");
         fs::write(&temp_file, "test content").unwrap();
-        
+
         assert!(is_file_path("test_temp_file.txt"));
-        
+
         // Clean up
         fs::remove_file(&temp_file).unwrap();
     }
@@ -117,9 +127,9 @@ mod tests {
         // Create a temporary directory for testing
         let temp_dir = PathBuf::from("test_temp_dir");
         fs::create_dir(&temp_dir).unwrap();
-        
+
         assert!(is_file_path("test_temp_dir"));
-        
+
         // Clean up
         fs::remove_dir(&temp_dir).unwrap();
     }
@@ -139,5 +149,3 @@ mod tests {
         assert!(!is_file_path("-"));
     }
 }
-
- 

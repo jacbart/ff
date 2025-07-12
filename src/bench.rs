@@ -1,16 +1,20 @@
-use std::time::Instant;
 use crate::fuzzy::FuzzyFinder;
+use std::time::Instant;
 
-pub fn benchmark_filtering(items: Vec<String>, query: &str, iterations: usize) -> (f64, Vec<String>) {
+pub fn benchmark_filtering(
+    items: Vec<String>,
+    query: &str,
+    iterations: usize,
+) -> (f64, Vec<String>) {
     let mut fuzzy_finder = FuzzyFinder::new(items, false);
     fuzzy_finder.query = query.to_string();
-    
+
     let start = Instant::now();
     for _ in 0..iterations {
         fuzzy_finder.update_filter();
     }
     let duration = start.elapsed();
-    
+
     let avg_time = duration.as_micros() as f64 / iterations as f64;
     (avg_time, fuzzy_finder.filtered_items)
 }
@@ -22,7 +26,10 @@ pub fn calculate_benchmark_stats(duration: std::time::Duration, iterations: usiz
 
 // Pure function for formatting benchmark results
 pub fn format_benchmark_result(query: &str, avg_time: f64, result_count: usize) -> String {
-    format!("  Query '{}': {:.2}μs avg, {} results", query, avg_time, result_count)
+    format!(
+        "  Query '{}': {:.2}μs avg, {} results",
+        query, avg_time, result_count
+    )
 }
 
 // Pure function for generating benchmark dataset sizes
@@ -38,16 +45,16 @@ pub fn get_benchmark_queries() -> Vec<&'static str> {
 // Pure function for generating file path benchmark queries
 pub fn get_file_path_queries() -> Vec<&'static str> {
     vec![
-        "src",           // Common prefix
-        "main",          // Common name
-        "rs",            // Common extension
-        "test",          // Common substring
-        "xyz",           // Rare substring
-        "src/main",      // Path-like
-        "main.rs",       // File-like
-        "src/main.rs",   // Full path
-        "SRC",           // Case insensitive
-        "sRc",           // Mixed case
+        "src",         // Common prefix
+        "main",        // Common name
+        "rs",          // Common extension
+        "test",        // Common substring
+        "xyz",         // Rare substring
+        "src/main",    // Path-like
+        "main.rs",     // File-like
+        "src/main.rs", // Full path
+        "SRC",         // Case insensitive
+        "sRc",         // Mixed case
     ]
 }
 
@@ -72,16 +79,16 @@ pub fn get_parallel_vs_sequential_queries() -> Vec<&'static str> {
 }
 
 pub fn generate_sequential_items(count: usize) -> Vec<String> {
-    (0..count)
-        .map(|i| format!("item_{:05}", i))
-        .collect()
+    (0..count).map(|i| format!("item_{:05}", i)).collect()
 }
 
 pub fn generate_file_paths(count: usize) -> Vec<String> {
     let extensions = ["rs", "toml", "md", "txt", "json", "yaml", "yml"];
     let directories = ["src", "tests", "docs", "examples", "target", "benches"];
-    let names = ["main", "lib", "config", "utils", "helpers", "types", "traits"];
-    
+    let names = [
+        "main", "lib", "config", "utils", "helpers", "types", "traits",
+    ];
+
     (0..count)
         .map(|i| {
             let dir = directories[i % directories.len()];
@@ -116,106 +123,135 @@ pub fn generate_realistic_dataset() -> Vec<String> {
 }
 
 // Pure function for running a single benchmark with given parameters
-pub fn run_single_benchmark(items: Vec<String>, query: &str, iterations: usize) -> (f64, Vec<String>) {
+pub fn run_single_benchmark(
+    items: Vec<String>,
+    query: &str,
+    iterations: usize,
+) -> (f64, Vec<String>) {
     let mut fuzzy_finder = FuzzyFinder::new(items, false);
     fuzzy_finder.query = query.to_string();
-    
+
     let start = Instant::now();
     for _ in 0..iterations {
         fuzzy_finder.update_filter();
     }
     let duration = start.elapsed();
-    
+
     let avg_time = calculate_benchmark_stats(duration, iterations);
     (avg_time, fuzzy_finder.filtered_items)
 }
 
 pub fn benchmark_parallel_vs_sequential() {
     println!("\n=== Parallel vs Sequential Benchmark ===");
-    
+
     let sizes = get_parallel_vs_sequential_sizes();
     let queries = get_parallel_vs_sequential_queries();
-    
+
     for size in sizes {
         println!("\nDataset size: {} items", size);
         let items = generate_sequential_items(size);
-        
+
         for query in &queries {
             let (avg_time, results) = benchmark_filtering(items.clone(), query, 50);
-            println!("  Query '{}': {:.2}μs avg, {} results", query, avg_time, results.len());
+            println!(
+                "  Query '{}': {:.2}μs avg, {} results",
+                query,
+                avg_time,
+                results.len()
+            );
         }
     }
 }
 
 pub fn benchmark_dataset_sizes() {
     println!("=== Dataset Size Benchmarks ===");
-    
+
     let sizes = get_benchmark_sizes();
     let queries = get_benchmark_queries();
-    
+
     for size in sizes {
         println!("\nDataset size: {} items", size);
         let items = generate_sequential_items(size);
-        
+
         for query in &queries {
             let (avg_time, results) = benchmark_filtering(items.clone(), query, 100);
-            println!("  Query '{}': {:.2}μs avg, {} results", query, avg_time, results.len());
+            println!(
+                "  Query '{}': {:.2}μs avg, {} results",
+                query,
+                avg_time,
+                results.len()
+            );
         }
     }
 }
 
 pub fn benchmark_query_types() {
     println!("\n=== Query Type Benchmarks ===");
-    
+
     let items = generate_file_paths(10000);
     let queries = get_file_path_queries();
-    
+
     println!("Dataset: {} file paths", items.len());
-    
+
     for query in queries {
         let (avg_time, results) = benchmark_filtering(items.clone(), query, 100);
-        println!("  Query '{}': {:.2}μs avg, {} results", query, avg_time, results.len());
+        println!(
+            "  Query '{}': {:.2}μs avg, {} results",
+            query,
+            avg_time,
+            results.len()
+        );
     }
 }
 
 pub fn benchmark_realistic_dataset() {
     println!("\n=== Realistic Dataset Benchmark ===");
-    
+
     let items = generate_realistic_dataset();
     let queries = get_realistic_queries();
-    
+
     println!("Dataset: {} realistic file paths", items.len());
-    
+
     for query in queries {
         let (avg_time, results) = benchmark_filtering(items.clone(), query, 1000);
-        println!("  Query '{}': {:.2}μs avg, {} results", query, avg_time, results.len());
+        println!(
+            "  Query '{}': {:.2}μs avg, {} results",
+            query,
+            avg_time,
+            results.len()
+        );
     }
 }
 
 pub fn benchmark_large_dataset() {
     println!("\n=== Large Dataset Benchmark ===");
-    
+
     let items = generate_sequential_items(10000);
     let queries = get_large_dataset_queries();
-    
+
     println!("Dataset: {} sequential items", items.len());
-    
+
     for query in queries {
         let (avg_time, results) = benchmark_filtering(items.clone(), query, 100);
-        println!("  Query '{}': {:.2}μs avg, {} results", query, avg_time, results.len());
+        println!(
+            "  Query '{}': {:.2}μs avg, {} results",
+            query,
+            avg_time,
+            results.len()
+        );
     }
 }
 
 pub fn run_all_benchmarks() {
     println!("FF Performance Benchmarks");
     println!("=========================");
-    
+
     benchmark_dataset_sizes();
     benchmark_query_types();
     benchmark_realistic_dataset();
     benchmark_large_dataset();
     benchmark_parallel_vs_sequential();
-    
+
     println!("\n=== Benchmark Summary ===");
     println!("These benchmarks measure fuzzy filtering performance across different scenarios.");
     println!("Lower μs values indicate better performance.");
@@ -270,7 +306,10 @@ mod tests {
     #[test]
     fn test_get_large_dataset_queries() {
         let queries = get_large_dataset_queries();
-        assert_eq!(queries, vec!["item", "item_1", "item_12", "item_123", "item_1234"]);
+        assert_eq!(
+            queries,
+            vec!["item", "item_1", "item_12", "item_123", "item_1234"]
+        );
     }
 
     #[test]
@@ -324,7 +363,7 @@ mod tests {
     fn test_run_single_benchmark() {
         let items = vec!["test1".to_string(), "test2".to_string()];
         let (avg_time, results) = run_single_benchmark(items, "test", 1);
-        
+
         assert!(avg_time >= 0.0);
         assert_eq!(results.len(), 2); // Both items should match "test"
     }
@@ -333,7 +372,7 @@ mod tests {
     fn test_run_single_benchmark_no_matches() {
         let items = vec!["abc".to_string(), "def".to_string()];
         let (avg_time, results) = run_single_benchmark(items, "xyz", 1);
-        
+
         assert!(avg_time >= 0.0);
         assert_eq!(results.len(), 0); // No items should match "xyz"
     }
@@ -342,7 +381,7 @@ mod tests {
     fn test_benchmark_filtering() {
         let items = vec!["test1".to_string(), "test2".to_string()];
         let (avg_time, results) = benchmark_filtering(items, "test", 1);
-        
+
         assert!(avg_time >= 0.0);
         assert_eq!(results.len(), 2);
     }
@@ -351,7 +390,7 @@ mod tests {
     fn test_benchmark_filtering_empty_query() {
         let items = vec!["test1".to_string(), "test2".to_string()];
         let (avg_time, results) = benchmark_filtering(items, "", 1);
-        
+
         assert!(avg_time >= 0.0);
         assert_eq!(results.len(), 2); // Empty query should match all items
     }
@@ -360,7 +399,7 @@ mod tests {
     fn test_benchmark_filtering_no_matches() {
         let items = vec!["abc".to_string(), "def".to_string()];
         let (avg_time, results) = benchmark_filtering(items, "xyz", 1);
-        
+
         assert!(avg_time >= 0.0);
         assert_eq!(results.len(), 0);
     }
@@ -369,8 +408,8 @@ mod tests {
     fn test_benchmark_filtering_multiple_iterations() {
         let items = vec!["test1".to_string(), "test2".to_string()];
         let (avg_time, results) = benchmark_filtering(items, "test", 5);
-        
+
         assert!(avg_time >= 0.0);
         assert_eq!(results.len(), 2);
     }
-} 
+}

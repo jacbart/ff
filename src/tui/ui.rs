@@ -1,3 +1,5 @@
+use crate::fuzzy::FuzzyFinder;
+use crate::tui::controls::handle_key_event;
 use crossterm::{
     cursor,
     event::{self, Event},
@@ -8,21 +10,19 @@ use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout},
     style::{Color, Modifier, Style},
-    text::{Span, Line},
+    text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
     Terminal,
 };
-use crate::fuzzy::FuzzyFinder;
-use crate::tui::controls::handle_key_event;
 use std::io;
 
 // Ayu color palette for highlights and subtle styling
-const NATIVE_BG: Color = Color::Reset;      // Use terminal's default background
-const NATIVE_FG: Color = Color::Reset;      // Use terminal's default foreground
+const NATIVE_BG: Color = Color::Reset; // Use terminal's default background
+const NATIVE_FG: Color = Color::Reset; // Use terminal's default foreground
 const AYU_YELLOW: Color = Color::Rgb(255, 213, 128); // Matched chars
-const AYU_GREEN: Color = Color::Rgb(184, 204, 82);   // Selected items
-const AYU_GRAY: Color = Color::Rgb(92, 103, 115);    // Dim text
-const AYU_DIM_BLUE: Color = Color::Rgb(34, 52, 61);    // Very dim blue for cursor highlight
+const AYU_GREEN: Color = Color::Rgb(184, 204, 82); // Selected items
+const AYU_GRAY: Color = Color::Rgb(92, 103, 115); // Dim text
+const AYU_DIM_BLUE: Color = Color::Rgb(34, 52, 61); // Very dim blue for cursor highlight
 
 #[derive(Debug, Clone)]
 pub struct TuiConfig {
@@ -84,63 +84,80 @@ impl TuiConfig {
     }
 }
 
-pub fn run_tui(items: Vec<String>, multi_select: bool) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn run_tui(
+    items: Vec<String>,
+    multi_select: bool,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     run_tui_with_config(items, multi_select, TuiConfig::default())
 }
 
-pub fn run_tui_with_config(items: Vec<String>, multi_select: bool, config: TuiConfig) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+pub fn run_tui_with_config(
+    items: Vec<String>,
+    multi_select: bool,
+    config: TuiConfig,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     run_interactive_tui(items, multi_select, config)
 }
 
-fn run_interactive_tui(items: Vec<String>, multi_select: bool, config: TuiConfig) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+fn run_interactive_tui(
+    items: Vec<String>,
+    multi_select: bool,
+    config: TuiConfig,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     // Setup terminal with panic-safe raw mode
     let _raw_mode = RawModeGuard::new().map_err(|e| format!("Failed to enable raw mode: {}", e))?;
     let mut stdout = io::stdout();
-    
+
     // Store initial cursor position for non-fullscreen mode
     let initial_cursor_pos = if !config.fullscreen {
         crossterm::cursor::position().unwrap_or((0, 0))
     } else {
         (0, 0)
     };
-    
+
     // Track if we scrolled and how much
     let mut scrolled_lines = 0;
-    
+
     if config.fullscreen {
         // Clear screen and hide cursor for fullscreen mode
-        execute!(stdout, 
+        execute!(
+            stdout,
             Clear(ClearType::All),
             cursor::Hide,
             cursor::MoveTo(0, 0)
-        ).map_err(|e| format!("Failed to initialize terminal: {}", e))?;
+        )
+        .map_err(|e| format!("Failed to initialize terminal: {}", e))?;
     } else {
         // For non-fullscreen mode, check if we need to scroll the view down
         let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
         let tui_height = config.calculate_height(terminal_size.1);
         let start_y = initial_cursor_pos.1;
         let max_start_y = terminal_size.1.saturating_sub(tui_height);
-        
+
         // If there's not enough space, scroll the view down
         if start_y > max_start_y {
             scrolled_lines = start_y - max_start_y;
-            execute!(stdout,
+            execute!(
+                stdout,
                 cursor::Hide,
                 crossterm::terminal::ScrollUp(scrolled_lines)
-            ).map_err(|e| format!("Failed to scroll terminal: {}", e))?;
+            )
+            .map_err(|e| format!("Failed to scroll terminal: {}", e))?;
         } else {
-            execute!(stdout, 
-                cursor::Hide
-            ).map_err(|e| format!("Failed to initialize terminal: {}", e))?;
+            execute!(stdout, cursor::Hide)
+                .map_err(|e| format!("Failed to initialize terminal: {}", e))?;
         }
     }
-    
+
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).map_err(|e| format!("Failed to create terminal: {}", e))?;
-    
+    let mut terminal =
+        Terminal::new(backend).map_err(|e| format!("Failed to create terminal: {}", e))?;
+
     // Only clear terminal in fullscreen mode
     if config.fullscreen {
-        terminal.clear().map_err(|e| format!("Failed to clear terminal: {}", e))?;
+        terminal
+            .clear()
+            .map_err(|e| format!("Failed to clear terminal: {}", e))?;
     }
 
     let mut fuzzy_finder = FuzzyFinder::new(items, multi_select);
@@ -152,9 +169,11 @@ fn run_interactive_tui(items: Vec<String>, multi_select: bool, config: TuiConfig
         terminal.draw(|f| {
             render_ui(f, &fuzzy_finder, multi_select, &config, initial_cursor_pos);
         })?;
-        
+
         // Handle input events
-        if let Event::Key(key_event) = event::read().map_err(|e| format!("Failed to read input: {}", e))? {
+        if let Event::Key(key_event) =
+            event::read().map_err(|e| format!("Failed to read input: {}", e))?
+        {
             let action = handle_key_event(&key_event, &mut fuzzy_finder);
             match action {
                 crate::tui::controls::Action::Exit => break,
@@ -169,18 +188,20 @@ fn run_interactive_tui(items: Vec<String>, multi_select: bool, config: TuiConfig
 
     // Cleanup and restore cursor position
     disable_raw_mode()?;
-    
+
     let terminal_size = crossterm::terminal::size().unwrap_or((80, 24));
     if config.fullscreen {
         // For fullscreen mode, clear only the viewport area (entire terminal)
         for y in 0..terminal_size.1 {
-            execute!(terminal.backend_mut(),
+            execute!(
+                terminal.backend_mut(),
                 cursor::MoveTo(0, y),
                 Clear(ClearType::CurrentLine)
             )?;
         }
         // Restore cursor to original position and show it
-        execute!(terminal.backend_mut(),
+        execute!(
+            terminal.backend_mut(),
             cursor::MoveTo(initial_cursor_pos.0, initial_cursor_pos.1),
             cursor::Show
         )?;
@@ -192,24 +213,27 @@ fn run_interactive_tui(items: Vec<String>, multi_select: bool, config: TuiConfig
         // Ensure we don't exceed terminal bounds (same logic as in render_ui)
         let max_start_y = terminal_size.1.saturating_sub(tui_height);
         let actual_start_y = start_y.min(max_start_y);
-        
+
         // Clear the viewport area line by line
         for y in actual_start_y..(actual_start_y + tui_height) {
-            execute!(terminal.backend_mut(),
+            execute!(
+                terminal.backend_mut(),
                 cursor::MoveTo(0, y),
                 Clear(ClearType::CurrentLine)
             )?;
         }
-        
+
         // If we scrolled down, scroll back up to restore the original view
         if scrolled_lines > 0 {
-            execute!(terminal.backend_mut(),
+            execute!(
+                terminal.backend_mut(),
                 crossterm::terminal::ScrollDown(scrolled_lines)
             )?;
         }
-        
+
         // Restore cursor to original position and show it
-        execute!(terminal.backend_mut(),
+        execute!(
+            terminal.backend_mut(),
             cursor::MoveTo(initial_cursor_pos.0, initial_cursor_pos.1),
             cursor::Show
         )?;
@@ -237,12 +261,12 @@ pub fn create_results_title(filtered_count: usize, total_count: usize) -> String
 
 // Pure function for determining if an item is selected
 pub fn is_item_selected(
-    index: usize, 
-    cursor_position: usize, 
-    multi_select: bool, 
-    item: &str, 
-    items: &[String], 
-    selected_indices: &[usize]
+    index: usize,
+    cursor_position: usize,
+    multi_select: bool,
+    item: &str,
+    items: &[String],
+    selected_indices: &[usize],
 ) -> bool {
     if multi_select {
         let original_index = items.iter().position(|x| x == item);
@@ -265,16 +289,18 @@ pub fn create_item_style(index: usize, cursor_position: usize, is_selected: bool
             .bg(NATIVE_BG)
             .add_modifier(Modifier::BOLD)
     } else {
-        Style::default()
-            .fg(NATIVE_FG)
-            .bg(NATIVE_BG)
+        Style::default().fg(NATIVE_FG).bg(NATIVE_BG)
     }
 }
 
 // Pure function for creating item prefix
 pub fn create_item_prefix(multi_select: bool, is_selected: bool) -> &'static str {
     if multi_select {
-        if is_selected { "✓ " } else { "  " }
+        if is_selected {
+            "✓ "
+        } else {
+            "  "
+        }
     } else {
         ""
     }
@@ -282,25 +308,25 @@ pub fn create_item_prefix(multi_select: bool, is_selected: bool) -> &'static str
 
 // Pure function for creating list items
 pub fn create_list_items<'a>(
-    filtered_items: &'a [String], 
-    fuzzy_finder: &'a FuzzyFinder
+    filtered_items: &'a [String],
+    fuzzy_finder: &'a FuzzyFinder,
 ) -> Vec<ListItem<'a>> {
     filtered_items
         .iter()
         .enumerate()
         .map(|(i, item)| {
             let is_selected = is_item_selected(
-                i, 
-                fuzzy_finder.cursor_position, 
-                fuzzy_finder.multi_select, 
-                item, 
-                &fuzzy_finder.items, 
-                &fuzzy_finder.selected_indices
+                i,
+                fuzzy_finder.cursor_position,
+                fuzzy_finder.multi_select,
+                item,
+                &fuzzy_finder.items,
+                &fuzzy_finder.selected_indices,
             );
             let style = create_item_style(i, fuzzy_finder.cursor_position, is_selected);
             let prefix = create_item_prefix(fuzzy_finder.multi_select, is_selected);
             let highlighted_text = create_highlighted_text(item, &fuzzy_finder.query, style);
-            
+
             let mut all_spans = vec![Span::styled(prefix, style)];
             all_spans.extend(highlighted_text.spans);
             ListItem::new(vec![Line::from(all_spans)])
@@ -320,9 +346,15 @@ pub fn create_search_title(multi_select: bool, selected_count: usize) -> String 
 // Pure function for creating search text with Ayu dim color
 pub fn create_search_text(query: &str) -> Line {
     if query.is_empty() {
-        Line::from(vec![Span::styled("Type to search...", Style::default().fg(AYU_GRAY))])
+        Line::from(vec![Span::styled(
+            "Type to search...",
+            Style::default().fg(AYU_GRAY),
+        )])
     } else {
-        Line::from(vec![Span::styled(query, Style::default().fg(AYU_YELLOW).add_modifier(Modifier::BOLD))])
+        Line::from(vec![Span::styled(
+            query,
+            Style::default().fg(AYU_YELLOW).add_modifier(Modifier::BOLD),
+        )])
     }
 }
 
@@ -340,10 +372,17 @@ pub fn create_highlighted_text<'a>(text: &'a str, query: &str, base_style: Style
             spans.push(Span::styled(&text[last_pos..pos], base_style));
         }
         let char_start = text.char_indices().nth(pos).map(|(i, _)| i).unwrap_or(pos);
-        let char_end = text.char_indices().nth(pos + 1).map(|(i, _)| i).unwrap_or(text.len());
+        let char_end = text
+            .char_indices()
+            .nth(pos + 1)
+            .map(|(i, _)| i)
+            .unwrap_or(text.len());
         spans.push(Span::styled(
             &text[char_start..char_end],
-            base_style.fg(Color::Rgb(0,0,0)).bg(AYU_YELLOW).add_modifier(Modifier::BOLD)
+            base_style
+                .fg(Color::Rgb(0, 0, 0))
+                .bg(AYU_YELLOW)
+                .add_modifier(Modifier::BOLD),
         ));
         last_pos = char_end;
     }
@@ -353,9 +392,15 @@ pub fn create_highlighted_text<'a>(text: &'a str, query: &str, base_style: Style
     Line::from(spans)
 }
 
-fn render_ui(f: &mut ratatui::Frame, fuzzy_finder: &FuzzyFinder, multi_select: bool, config: &TuiConfig, initial_cursor_pos: (u16, u16)) {
+fn render_ui(
+    f: &mut ratatui::Frame,
+    fuzzy_finder: &FuzzyFinder,
+    multi_select: bool,
+    config: &TuiConfig,
+    initial_cursor_pos: (u16, u16),
+) {
     let size = f.area();
-    
+
     if config.fullscreen {
         // Fullscreen mode with borders and traditional layout
         let chunks = Layout::default()
@@ -363,10 +408,13 @@ fn render_ui(f: &mut ratatui::Frame, fuzzy_finder: &FuzzyFinder, multi_select: b
             .margin(0)
             .constraints(create_layout_constraints())
             .split(size);
-        
+
         // Results list (top section)
         let results_block = Block::default()
-            .title(create_results_title(fuzzy_finder.filtered_items.len(), fuzzy_finder.items.len()))
+            .title(create_results_title(
+                fuzzy_finder.filtered_items.len(),
+                fuzzy_finder.items.len(),
+            ))
             .borders(Borders::ALL)
             .style(Style::default().fg(AYU_GRAY).bg(NATIVE_BG));
         let list_items = create_list_items(&fuzzy_finder.filtered_items, fuzzy_finder);
@@ -374,7 +422,7 @@ fn render_ui(f: &mut ratatui::Frame, fuzzy_finder: &FuzzyFinder, multi_select: b
             .block(results_block)
             .style(Style::default().bg(NATIVE_BG));
         f.render_widget(list, chunks[0]);
-        
+
         // Search input area with mode indicator (bottom section)
         let search_title = create_search_title(multi_select, fuzzy_finder.selected_indices.len());
         let search_block = Block::default()
@@ -389,14 +437,14 @@ fn render_ui(f: &mut ratatui::Frame, fuzzy_finder: &FuzzyFinder, multi_select: b
     } else {
         // Non-fullscreen mode: render from initial cursor position down
         let tui_height = config.calculate_height(size.height);
-        
+
         // Use the initial cursor position as the starting point
         let start_y = initial_cursor_pos.1;
-        
+
         // Ensure we don't exceed terminal bounds
         let max_start_y = size.height.saturating_sub(tui_height);
         let start_y = start_y.min(max_start_y);
-        
+
         // Create a smaller area starting from the initial cursor position
         let tui_area = ratatui::layout::Rect {
             x: 0,
@@ -404,7 +452,7 @@ fn render_ui(f: &mut ratatui::Frame, fuzzy_finder: &FuzzyFinder, multi_select: b
             width: size.width,
             height: tui_height,
         };
-        
+
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .margin(0)
@@ -413,21 +461,25 @@ fn render_ui(f: &mut ratatui::Frame, fuzzy_finder: &FuzzyFinder, multi_select: b
                 Constraint::Min(0),    // Results list (takes remaining space)
             ])
             .split(tui_area);
-        
+
         // Search input line (no borders, just the input)
         let search_text = if fuzzy_finder.query.is_empty() {
-            Line::from(vec![Span::styled("Type to search...", Style::default().fg(AYU_GRAY))])
+            Line::from(vec![Span::styled(
+                "Type to search...",
+                Style::default().fg(AYU_GRAY),
+            )])
         } else {
-            Line::from(vec![Span::styled(&fuzzy_finder.query, Style::default().fg(AYU_YELLOW).add_modifier(Modifier::BOLD))])
+            Line::from(vec![Span::styled(
+                &fuzzy_finder.query,
+                Style::default().fg(AYU_YELLOW).add_modifier(Modifier::BOLD),
+            )])
         };
-        let search_paragraph = Paragraph::new(search_text)
-            .style(Style::default().bg(NATIVE_BG));
+        let search_paragraph = Paragraph::new(search_text).style(Style::default().bg(NATIVE_BG));
         f.render_widget(search_paragraph, chunks[0]);
-        
+
         // Results list (no borders)
         let list_items = create_list_items(&fuzzy_finder.filtered_items, fuzzy_finder);
-        let list = List::new(list_items)
-            .style(Style::default().bg(NATIVE_BG));
+        let list = List::new(list_items).style(Style::default().bg(NATIVE_BG));
         f.render_widget(list, chunks[1]);
     }
 }
@@ -436,7 +488,7 @@ fn render_ui(f: &mut ratatui::Frame, fuzzy_finder: &FuzzyFinder, multi_select: b
 struct RawModeGuard;
 impl RawModeGuard {
     fn new() -> std::io::Result<Self> {
-        enable_raw_mode().map_err(|e| std::io::Error::other(e))?;
+        enable_raw_mode().map_err(std::io::Error::other)?;
         Ok(Self)
     }
 }
@@ -469,24 +521,77 @@ mod tests {
     fn test_is_item_selected_single_mode() {
         let items = vec!["item1".to_string(), "item2".to_string()];
         let selected_indices = vec![];
-        
+
         // Cursor at position 0
-        assert!(is_item_selected(0, 0, false, "item1", &items, &selected_indices));
-        assert!(!is_item_selected(1, 0, false, "item2", &items, &selected_indices));
-        
+        assert!(is_item_selected(
+            0,
+            0,
+            false,
+            "item1",
+            &items,
+            &selected_indices
+        ));
+        assert!(!is_item_selected(
+            1,
+            0,
+            false,
+            "item2",
+            &items,
+            &selected_indices
+        ));
+
         // Cursor at position 1
-        assert!(!is_item_selected(0, 1, false, "item1", &items, &selected_indices));
-        assert!(is_item_selected(1, 1, false, "item2", &items, &selected_indices));
+        assert!(!is_item_selected(
+            0,
+            1,
+            false,
+            "item1",
+            &items,
+            &selected_indices
+        ));
+        assert!(is_item_selected(
+            1,
+            1,
+            false,
+            "item2",
+            &items,
+            &selected_indices
+        ));
     }
 
     #[test]
     fn test_is_item_selected_multi_mode() {
-        let items = vec!["item1".to_string(), "item2".to_string(), "item3".to_string()];
+        let items = vec![
+            "item1".to_string(),
+            "item2".to_string(),
+            "item3".to_string(),
+        ];
         let selected_indices = vec![0, 2];
-        
-        assert!(is_item_selected(0, 0, true, "item1", &items, &selected_indices));
-        assert!(!is_item_selected(1, 0, true, "item2", &items, &selected_indices));
-        assert!(is_item_selected(2, 0, true, "item3", &items, &selected_indices));
+
+        assert!(is_item_selected(
+            0,
+            0,
+            true,
+            "item1",
+            &items,
+            &selected_indices
+        ));
+        assert!(!is_item_selected(
+            1,
+            0,
+            true,
+            "item2",
+            &items,
+            &selected_indices
+        ));
+        assert!(is_item_selected(
+            2,
+            0,
+            true,
+            "item3",
+            &items,
+            &selected_indices
+        ));
     }
 
     #[test]
@@ -523,7 +628,7 @@ mod tests {
     fn test_create_list_items() {
         let mut finder = FuzzyFinder::new(vec!["item1".to_string(), "item2".to_string()], false);
         finder.update_filter();
-        
+
         let items = create_list_items(&finder.filtered_items, &finder);
         assert_eq!(items.len(), 2);
     }
@@ -555,7 +660,7 @@ mod tests {
     #[test]
     fn test_raw_mode_guard() {
         // Test that RawModeGuard can be created (this is a smoke test)
-        assert!(true);
+        // Function should not panic
     }
 
     #[test]
@@ -607,7 +712,7 @@ mod tests {
     fn test_tui_config_calculate_height_percentage() {
         let config = TuiConfig::with_height_percentage(50.0);
         assert_eq!(config.calculate_height(20), 10); // 50% of 20
-        assert_eq!(config.calculate_height(10), 5);  // 50% of 10
+        assert_eq!(config.calculate_height(10), 5); // 50% of 10
     }
 
     #[test]
@@ -615,4 +720,4 @@ mod tests {
         let config = TuiConfig::with_height_percentage(33.33);
         assert_eq!(config.calculate_height(10), 3); // 33.33% of 10 = 3.33, rounded to 3
     }
-} 
+}

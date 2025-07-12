@@ -17,10 +17,15 @@ pub fn parse_args_from(args: &[String]) -> Result<Config, String> {
     }
     let input_source = args[1].clone();
     if input_source.starts_with('-') {
-        return Err(format!("Invalid input source: '{}'. Did you mean to use a flag?", input_source));
+        return Err(format!(
+            "Invalid input source: '{}'. Did you mean to use a flag?",
+            input_source
+        ));
     }
     if input_source == "benchmark" {
-        let multi_select = args.iter().any(|arg| arg == "--multi-select" || arg == "-m");
+        let multi_select = args
+            .iter()
+            .any(|arg| arg == "--multi-select" || arg == "-m");
         return Ok(Config {
             input_source: "benchmark".to_string(),
             multi_select,
@@ -28,14 +33,18 @@ pub fn parse_args_from(args: &[String]) -> Result<Config, String> {
         });
     }
     if input_source.contains('/') || input_source.contains('\\') || input_source.contains('.') {
-        let multi_select = args.iter().any(|arg| arg == "--multi-select" || arg == "-m");
+        let multi_select = args
+            .iter()
+            .any(|arg| arg == "--multi-select" || arg == "-m");
         return Ok(Config {
             input_source,
             multi_select,
             direct_items: None,
         });
     }
-    let multi_select = args.iter().any(|arg| arg == "--multi-select" || arg == "-m");
+    let multi_select = args
+        .iter()
+        .any(|arg| arg == "--multi-select" || arg == "-m");
     let direct_items: Vec<String> = args[1..]
         .iter()
         .filter(|arg| *arg != "--multi-select" && *arg != "-m")
@@ -66,7 +75,9 @@ pub fn print_usage() {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --multi-select, -m  Allow selecting multiple items (default: single select)");
-    eprintln!("  --height <lines>    Set TUI height to specific number of lines (non-fullscreen mode)");
+    eprintln!(
+        "  --height <lines>    Set TUI height to specific number of lines (non-fullscreen mode)"
+    );
     eprintln!("  --height-percentage <percent>  Set TUI height as percentage of terminal (non-fullscreen mode)");
     eprintln!("  -h, --help      Show this help message");
     eprintln!("  -V, --version   Show version information");
@@ -227,7 +238,14 @@ mod tests {
         let args = to_args(&["ff", "apple", "banana", "cherry"]);
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.input_source, "direct");
-        assert_eq!(config.direct_items.as_ref().unwrap(), &vec!["apple".to_string(), "banana".to_string(), "cherry".to_string()]);
+        assert_eq!(
+            config.direct_items.as_ref().unwrap(),
+            &vec![
+                "apple".to_string(),
+                "banana".to_string(),
+                "cherry".to_string()
+            ]
+        );
         assert!(!config.multi_select);
     }
 
@@ -237,7 +255,10 @@ mod tests {
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.input_source, "direct");
         assert!(config.multi_select);
-        assert_eq!(config.direct_items.as_ref().unwrap(), &vec!["apple".to_string(), "banana".to_string()]);
+        assert_eq!(
+            config.direct_items.as_ref().unwrap(),
+            &vec!["apple".to_string(), "banana".to_string()]
+        );
     }
 
     #[test]
@@ -246,7 +267,10 @@ mod tests {
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.input_source, "direct");
         assert!(config.multi_select);
-        assert_eq!(config.direct_items.as_ref().unwrap(), &vec!["apple".to_string(), "banana".to_string()]);
+        assert_eq!(
+            config.direct_items.as_ref().unwrap(),
+            &vec!["apple".to_string(), "banana".to_string()]
+        );
     }
 
     #[test]
@@ -255,7 +279,14 @@ mod tests {
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.input_source, "direct");
         assert!(config.multi_select);
-        assert_eq!(config.direct_items.as_ref().unwrap(), &vec!["apple".to_string(), "banana".to_string(), "cherry".to_string()]);
+        assert_eq!(
+            config.direct_items.as_ref().unwrap(),
+            &vec![
+                "apple".to_string(),
+                "banana".to_string(),
+                "cherry".to_string()
+            ]
+        );
     }
 
     #[test]
@@ -276,7 +307,10 @@ mod tests {
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.input_source, "direct");
         assert!(!config.multi_select);
-        assert_eq!(config.direct_items.as_ref().unwrap(), &vec!["single_item".to_string()]);
+        assert_eq!(
+            config.direct_items.as_ref().unwrap(),
+            &vec!["single_item".to_string()]
+        );
     }
 
     #[test]
@@ -285,7 +319,10 @@ mod tests {
         let config = parse_args_from(&args).unwrap();
         assert_eq!(config.input_source, "direct");
         assert!(config.multi_select);
-        assert_eq!(config.direct_items.as_ref().unwrap(), &vec!["single_item".to_string()]);
+        assert_eq!(
+            config.direct_items.as_ref().unwrap(),
+            &vec!["single_item".to_string()]
+        );
     }
 
     #[test]
@@ -297,7 +334,10 @@ mod tests {
         };
         assert_eq!(config.input_source, "test");
         assert!(config.multi_select);
-        assert_eq!(config.direct_items.as_ref().unwrap(), &vec!["item1".to_string(), "item2".to_string()]);
+        assert_eq!(
+            config.direct_items.as_ref().unwrap(),
+            &vec!["item1".to_string(), "item2".to_string()]
+        );
     }
 
     #[test]
@@ -317,7 +357,7 @@ mod tests {
         // Test that print_usage doesn't panic
         // We can't easily capture stderr in tests, so we just test it doesn't crash
         print_usage();
-        assert!(true); // If we get here, it didn't panic
+        // If we get here, it didn't panic
     }
 
     #[test]
@@ -326,6 +366,6 @@ mod tests {
         // We can't easily test the actual execution since it uses env::args()
         // But we can test that the function exists
         let _function = parse_args;
-        assert!(true); // If we get here, the function exists
+        // If we get here, the function exists
     }
-} 
+}

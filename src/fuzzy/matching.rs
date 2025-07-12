@@ -1,5 +1,5 @@
-use rayon::prelude::*;
 use crate::fuzzy::finder::FuzzyFinder;
+use rayon::prelude::*;
 
 pub fn fuzzy_match(item: &str, query: &str) -> bool {
     if query.is_empty() {
@@ -27,14 +27,14 @@ pub fn find_match_positions(item: &str, query: &str) -> Vec<usize> {
     if query.is_empty() {
         return vec![];
     }
-    
+
     let query_lower = query.to_lowercase();
     let item_lower = item.to_lowercase();
-    
+
     let mut positions = Vec::new();
     let mut query_chars = query_lower.chars().peekable();
     let mut item_chars = item_lower.chars().enumerate();
-    
+
     while let Some(query_char) = query_chars.peek() {
         if let Some((pos, item_char)) = item_chars.next() {
             if item_char == *query_char {
@@ -45,7 +45,7 @@ pub fn find_match_positions(item: &str, query: &str) -> Vec<usize> {
             break;
         }
     }
-    
+
     positions
 }
 
@@ -60,7 +60,8 @@ pub fn sequential_filter(finder: &FuzzyFinder, query_lower: &str) -> Vec<String>
 }
 
 pub fn parallel_filter(finder: &FuzzyFinder, query_lower: &str) -> Vec<String> {
-    finder.items
+    finder
+        .items
         .par_iter()
         .enumerate()
         .filter_map(|(i, item)| {
@@ -71,4 +72,4 @@ pub fn parallel_filter(finder: &FuzzyFinder, query_lower: &str) -> Vec<String> {
             }
         })
         .collect()
-} 
+}
