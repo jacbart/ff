@@ -1,18 +1,18 @@
 # FF - Fast Fuzzy Finder
 
-A simple, fast fuzzy finder for Rust applications with TUI support.
+A high-performance fuzzy finder. **Fast, not precise** - designed for quick filtering rather than exact matching.
 
 ## What is FF?
 
-FF is a lightweight fuzzy finder that can be used both as a library in Rust applications and as a standalone CLI tool. It provides an intuitive terminal interface for searching through lists of items.
+FF is a lightweight fuzzy finder that can be used both as a library in Rust applications and as a standalone CLI tool. It provides fast filtering through lists of items with an intuitive terminal interface.
 
 ## Features
 
-- **Fast fuzzy matching** with substring and character sequence matching
+- **Fast fuzzy matching** - Quick filtering, not precise matching
 - **Case-insensitive search** by default
 - **Multi-select support** for selecting multiple items
 - **TUI interface** with keyboard navigation
-- **Cross-platform** support (Linux, macOS, Windows)
+- **Flexible input** - files, stdin, or direct items
 
 ## Quick Example
 
@@ -23,8 +23,8 @@ ls | ff
 # Multi-select from a list
 ff apple banana cherry --multi-select
 
-# Show version information
-ff --version
+# Height options
+ff items.txt --height 10
 ```
 
 ## Library Usage
@@ -43,10 +43,4 @@ finder.query = "app".to_string();
 finder.update_filter();
 
 assert_eq!(finder.filtered_items, vec!["apple".to_string()]);
-```
-
-## Next Steps
-
-- [Installation](getting-started/installation.md) - Learn how to install FF
-- [Quick Start](getting-started/quick-start.md) - Get up and running quickly
-- [CLI Usage](user-guide/cli-usage.md) - Learn the command line interface 
+``` 

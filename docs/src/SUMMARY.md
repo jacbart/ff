@@ -5,14 +5,14 @@
 # Getting Started
 
 - [Installation](getting-started/installation.md)
-- [Quick Start](getting-started/quick-start.md)
+- [Building](getting-started/building.md)
 
-# User Guide
+# Usage
 
-- [CLI Usage](user-guide/cli-usage.md)
-- [TUI Controls](user-guide/tui-controls.md)
+- [Library Usage](usage/library.md)
+- [CLI Usage](usage/cli.md)
 
-# API Reference
+# Development
 
-- [FuzzyFinder](api/fuzzy-finder.md)
-- [TUI Functions](api/tui-functions.md) 
+- [Testing & Coverage](development/testing.md)
+- [Release Preparation](development/release.md) 
