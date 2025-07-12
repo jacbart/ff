@@ -1,6 +1,5 @@
 use std::env;
 use std::fs;
-use std::process;
 
 use crate::bench;
 use crate::cli::planner::{plan_cli_action, CliAction};
@@ -24,6 +23,28 @@ pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
     }
 }
 
+/// List files in a directory.
+pub fn list_files_in_directory(dir_path: &str) -> Result<Vec<String>, String> {
+    match fs::read_dir(dir_path) {
+        Ok(entries) => {
+            let mut files = Vec::new();
+            for entry in entries {
+                match entry {
+                    Ok(entry) => {
+                        if let Some(file_name) = entry.file_name().to_str() {
+                            files.push(file_name.to_string());
+                        }
+                    }
+                    Err(e) => return Err(format!("Failed to read directory entry: {}", e)),
+                }
+            }
+            files.sort();
+            Ok(files)
+        }
+        Err(e) => Err(format!("Failed to read directory: {}", e)),
+    }
+}
+
 /// Check if a path looks like a file path.
 pub fn looks_like_file_path(path: &str) -> bool {
     path.contains('/') || path.contains('\\') || path.contains('.')
@@ -32,8 +53,17 @@ pub fn looks_like_file_path(path: &str) -> bool {
 /// Process items from file or direct input.
 pub fn process_items(items: Vec<String>) -> Result<Vec<String>, String> {
     // If items is a single file path, read from file
-    let processed_items = if items.len() == 1 && looks_like_file_path(&items[0]) {
-        read_items_from_file(&items[0])?
+    let processed_items = if items.len() == 1 {
+        let item = &items[0];
+        if item.starts_with("dir:") {
+            // Directory path
+            let dir_path = &item[4..]; // Remove "dir:" prefix
+            list_files_in_directory(dir_path)?
+        } else if looks_like_file_path(item) {
+            read_items_from_file(item)?
+        } else {
+            items
+        }
     } else {
         items
     };
@@ -99,44 +129,43 @@ pub fn run_tui_with_height_validation(
 }
 
 /// Run the CLI application.
-pub fn cli_main() {
+pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     match plan_cli_action(&args) {
         CliAction::ShowVersion => {
             println!("{}", get_build_info());
+            Ok(())
         }
         CliAction::ShowHelp => {
             config::print_usage();
+            Ok(())
         }
         CliAction::RunBenchmark { multi_select: _ } => {
             bench::run_all_benchmarks();
+            Ok(())
         }
         CliAction::RunTui {
             items,
             multi_select,
             height,
             height_percentage,
-        } => match run_tui_with_height_validation(items, multi_select, height, height_percentage) {
-            Ok(selected) => {
-                if !selected.is_empty() {
-                    // Move cursor to column 0 before printing results
-                    use crossterm::{cursor, execute};
-                    let _ = execute!(std::io::stdout(), cursor::MoveTo(0, 0));
-
-                    for item in selected {
-                        println!("{}", item);
-                    }
-                }
+            show_help_text,
+        } => {
+            let processed_items = process_items(items)?;
+            let mut config = TuiConfig::default();
+            config.fullscreen = height.is_none() && height_percentage.is_none();
+            config.height = height;
+            config.height_percentage = height_percentage;
+            config.show_help_text = show_help_text;
+            let selected = run_tui_with_config(processed_items, multi_select, config)?;
+            for item in selected {
+                println!("{}", item);
             }
-            Err(err) => {
-                eprintln!("Error: {}", err);
-                process::exit(1);
-            }
-        },
+            Ok(())
+        }
         CliAction::Error(msg) => {
             eprintln!("Error: {}", msg);
-            config::print_usage();
-            process::exit(1);
+            std::process::exit(1);
         }
     }
 }
@@ -210,6 +239,45 @@ mod tests {
     }
 
     #[test]
+    fn test_list_files_in_directory_success() {
+        // Create a temporary directory for testing
+        let temp_dir = PathBuf::from("test_dir");
+        fs::create_dir(&temp_dir).unwrap();
+        fs::write(&temp_dir.join("file1.txt"), "content1").unwrap();
+        fs::write(&temp_dir.join("file2.txt"), "content2").unwrap();
+
+        let result = list_files_in_directory(&temp_dir.to_str().unwrap());
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files, vec!["file1.txt", "file2.txt"]);
+
+        // Clean up
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_list_files_in_directory_empty() {
+        // Create a temporary empty directory
+        let temp_dir = PathBuf::from("test_empty_dir");
+        fs::create_dir(&temp_dir).unwrap();
+
+        let result = list_files_in_directory(&temp_dir.to_str().unwrap());
+        assert!(result.is_ok());
+        let files = result.unwrap();
+        assert_eq!(files, Vec::<String>::new());
+
+        // Clean up
+        fs::remove_dir_all(&temp_dir).unwrap();
+    }
+
+    #[test]
+    fn test_list_files_in_directory_nonexistent() {
+        let result = list_files_in_directory("nonexistent_dir");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read directory"));
+    }
+
+    #[test]
     fn test_process_items_direct() {
         let items = vec!["item1".to_string(), "item2".to_string()];
         let result = process_items(items);
@@ -246,6 +314,23 @@ mod tests {
         let result = process_items(items);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), vec!["justtext"]);
+    }
+
+    #[test]
+    fn test_process_items_single_directory_path() {
+        // Create a temporary directory
+        let temp_dir = PathBuf::from("test_dir");
+        fs::create_dir(&temp_dir).unwrap();
+        fs::write(&temp_dir.join("file1.txt"), "content1").unwrap();
+        fs::write(&temp_dir.join("file2.txt"), "content2").unwrap();
+
+        let items = vec!["dir:".to_string() + &temp_dir.to_str().unwrap()];
+        let result = process_items(items);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), vec!["file1.txt", "file2.txt"]);
+
+        // Clean up
+        fs::remove_dir_all(&temp_dir).unwrap();
     }
 
     #[test]

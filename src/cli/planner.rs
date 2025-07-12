@@ -20,6 +20,8 @@ pub enum CliAction {
         height: Option<u16>,
         /// Height as percentage of terminal
         height_percentage: Option<f32>,
+        /// Whether to show help text
+        show_help_text: bool,
     },
     /// Error with message
     Error(String),
@@ -40,7 +42,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
         return CliAction::Error("Missing required argument: input-source or items".to_string());
     }
     let input_source = args[1].clone();
-    if input_source.starts_with('-') {
+    if input_source.starts_with('-') && input_source != "-" {
         return CliAction::Error(format!(
             "Invalid input source: '{}'. Did you mean to use a flag?",
             input_source
@@ -53,6 +55,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     // Parse height options
     let mut height: Option<u16> = None;
     let mut height_percentage: Option<f32> = None;
+    let mut show_help_text = false;
 
     for (i, arg) in args.iter().enumerate() {
         if arg == "--height" && i + 1 < args.len() {
@@ -105,6 +108,8 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                     );
                 }
             }
+        } else if arg == "--help-text" {
+            show_help_text = true;
         }
     }
 
@@ -123,15 +128,27 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     if input_source == "benchmark" {
         return CliAction::RunBenchmark { multi_select };
     }
-    if input_source.contains('/') || input_source.contains('\\') || input_source.contains('.') {
-        // File path
-        // For testability, just return the file path as a single-item Vec
-        return CliAction::RunTui {
-            items: vec![input_source],
-            multi_select,
-            height,
-            height_percentage,
-        };
+    if std::path::Path::new(&input_source).exists() {
+        let path = std::path::Path::new(&input_source);
+        if path.is_dir() {
+            // Directory - will list files in the directory
+            return CliAction::RunTui {
+                items: vec![format!("dir:{}", input_source)],
+                multi_select,
+                height,
+                height_percentage,
+                show_help_text,
+            };
+        } else {
+            // File path
+            return CliAction::RunTui {
+                items: vec![input_source],
+                multi_select,
+                height,
+                height_percentage,
+                show_help_text,
+            };
+        }
     }
     // Direct items
     let mut direct_items: Vec<String> = Vec::new();
@@ -166,6 +183,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
         multi_select,
         height,
         height_percentage,
+        show_help_text,
     }
 }
 
@@ -230,7 +248,8 @@ mod tests {
                 items: vec!["file.txt".to_string()],
                 multi_select: false,
                 height: None,
-                height_percentage: None
+                height_percentage: None,
+                show_help_text: false,
             }
         );
         let args = to_args(&["ff", "/path/to/file.txt", "-m"]);
@@ -240,7 +259,23 @@ mod tests {
                 items: vec!["/path/to/file.txt".to_string()],
                 multi_select: true,
                 height: None,
-                height_percentage: None
+                height_percentage: None,
+                show_help_text: false,
+            }
+        );
+    }
+
+    #[test]
+    fn detects_directory() {
+        let args = to_args(&["ff", "test_dir"]);
+        assert_eq!(
+            plan_cli_action(&args),
+            CliAction::RunTui {
+                items: vec![format!("dir:{}", "test_dir")],
+                multi_select: false,
+                height: None,
+                height_percentage: None,
+                show_help_text: false,
             }
         );
     }
@@ -258,7 +293,8 @@ mod tests {
                 ],
                 multi_select: false,
                 height: None,
-                height_percentage: None
+                height_percentage: None,
+                show_help_text: false,
             }
         );
         let args = to_args(&["ff", "apple", "banana", "-m"]);
@@ -268,7 +304,8 @@ mod tests {
                 items: vec!["apple".to_string(), "banana".to_string()],
                 multi_select: true,
                 height: None,
-                height_percentage: None
+                height_percentage: None,
+                show_help_text: false,
             }
         );
     }
@@ -288,7 +325,8 @@ mod tests {
                 items: vec!["file.txt".to_string()],
                 multi_select: false,
                 height: Some(10),
-                height_percentage: None
+                height_percentage: None,
+                show_help_text: false,
             }
         );
     }
@@ -302,7 +340,8 @@ mod tests {
                 items: vec!["file.txt".to_string()],
                 multi_select: false,
                 height: Some(15),
-                height_percentage: None
+                height_percentage: None,
+                show_help_text: false,
             }
         );
     }
@@ -316,7 +355,8 @@ mod tests {
                 items: vec!["file.txt".to_string()],
                 multi_select: false,
                 height: None,
-                height_percentage: Some(50.0)
+                height_percentage: Some(50.0),
+                show_help_text: false,
             }
         );
     }
@@ -330,7 +370,8 @@ mod tests {
                 items: vec!["file.txt".to_string()],
                 multi_select: false,
                 height: None,
-                height_percentage: Some(75.0)
+                height_percentage: Some(75.0),
+                show_help_text: false,
             }
         );
     }
@@ -344,7 +385,8 @@ mod tests {
                 items: vec!["file.txt".to_string()],
                 multi_select: true,
                 height: Some(10),
-                height_percentage: None
+                height_percentage: None,
+                show_help_text: false,
             }
         );
     }
@@ -358,7 +400,8 @@ mod tests {
                 items: vec!["file.txt".to_string()],
                 multi_select: true,
                 height: None,
-                height_percentage: Some(50.0)
+                height_percentage: Some(50.0),
+                show_help_text: false,
             }
         );
     }
@@ -372,7 +415,8 @@ mod tests {
                 items: vec!["apple".to_string(), "banana".to_string()],
                 multi_select: false,
                 height: Some(8),
-                height_percentage: None
+                height_percentage: None,
+                show_help_text: false,
             }
         );
     }
@@ -411,5 +455,20 @@ mod tests {
     fn detects_missing_height_percentage_value() {
         let args = to_args(&["ff", "file.txt", "--height-percentage"]);
         assert!(matches!(plan_cli_action(&args), CliAction::Error(_)));
+    }
+
+    #[test]
+    fn detects_help_text_flag() {
+        let args = to_args(&["ff", "--help-text"]);
+        assert_eq!(
+            plan_cli_action(&args),
+            CliAction::RunTui {
+                items: vec![], // No items for help text
+                multi_select: false,
+                height: None,
+                height_percentage: None,
+                show_help_text: true,
+            }
+        );
     }
 }
