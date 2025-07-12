@@ -4,7 +4,7 @@ use std::fs;
 
 use crate::config;
 use crate::bench;
-use crate::tui::run_tui;
+use crate::tui::{run_tui, run_tui_with_config, TuiConfig};
 use crate::get_build_info;
 use crate::cli::tty::check_tty_requirements;
 use crate::cli::planner::{plan_cli_action, CliAction};
@@ -70,6 +70,31 @@ pub fn run_tui_with_validation(items: Vec<String>, multi_select: bool) -> Result
     }
 }
 
+/// Pure function for running TUI with height configuration
+pub fn run_tui_with_height_validation(
+    items: Vec<String>, 
+    multi_select: bool, 
+    height: Option<u16>, 
+    height_percentage: Option<f32>
+) -> Result<Vec<String>, String> {
+    let processed_items = process_items(items)?;
+    
+    validate_tty_requirements()?;
+    
+    let config = if let Some(h) = height {
+        TuiConfig::with_height(h)
+    } else if let Some(p) = height_percentage {
+        TuiConfig::with_height_percentage(p)
+    } else {
+        TuiConfig::fullscreen()
+    };
+    
+    match run_tui_with_config(processed_items, multi_select, config) {
+        Ok(selected) => Ok(handle_tui_results(selected)),
+        Err(err) => Err(format!("TUI error: {}", err))
+    }
+}
+
 /// Run the CLI application.
 /// 
 /// This function handles all CLI-specific logic including:
@@ -119,8 +144,8 @@ pub fn cli_main() {
         CliAction::RunBenchmark { multi_select: _ } => {
             bench::run_all_benchmarks();
         }
-        CliAction::RunTui { items, multi_select } => {
-            match run_tui_with_validation(items, multi_select) {
+        CliAction::RunTui { items, multi_select, height, height_percentage } => {
+            match run_tui_with_height_validation(items, multi_select, height, height_percentage) {
                 Ok(selected) => {
                     if !selected.is_empty() {
                         for item in selected {

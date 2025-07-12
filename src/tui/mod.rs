@@ -1,5 +1,5 @@
 pub mod ui;
 pub mod controls;
 
-pub use ui::run_tui;
+pub use ui::{run_tui, run_tui_with_config, TuiConfig};
  

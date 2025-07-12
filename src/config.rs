@@ -57,8 +57,8 @@ pub fn parse_args() -> Result<Config, String> {
 }
 
 pub fn print_usage() {
-    eprintln!("Usage: ff <input-source> [--multi-select]");
-    eprintln!("   or: ff <item1> [item2] [item3] ... [--multi-select]");
+    eprintln!("Usage: ff <input-source> [--multi-select] [--height <lines>] [--height-percentage <percent>]");
+    eprintln!("   or: ff <item1> [item2] [item3] ... [--multi-select] [--height <lines>] [--height-percentage <percent>]");
     eprintln!();
     eprintln!("Arguments:");
     eprintln!("  input-source    File path to read items from");
@@ -66,8 +66,14 @@ pub fn print_usage() {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --multi-select, -m  Allow selecting multiple items (default: single select)");
+    eprintln!("  --height <lines>    Set TUI height to specific number of lines (non-fullscreen mode)");
+    eprintln!("  --height-percentage <percent>  Set TUI height as percentage of terminal (non-fullscreen mode)");
     eprintln!("  -h, --help      Show this help message");
     eprintln!("  -V, --version   Show version information");
+    eprintln!();
+    eprintln!("TUI Modes:");
+    eprintln!("  Fullscreen (default): Full terminal interface with borders");
+    eprintln!("  Non-fullscreen: Compact interface without borders, search bar as input line");
     eprintln!();
     eprintln!("TUI Controls:");
     eprintln!("  Type to search  Filter items as you type");
@@ -83,6 +89,8 @@ pub fn print_usage() {
     eprintln!("  ff /path/to/file.txt -m       # Read from file, multi-select");
     eprintln!("  ff item1 item2 item3          # Direct items, single select");
     eprintln!("  ff apple banana cherry -m     # Direct items, multi-select");
+    eprintln!("  ff file.txt --height 10       # Non-fullscreen mode, 10 lines high");
+    eprintln!("  ff file.txt --height-percentage 50  # Non-fullscreen mode, 50% of terminal");
     eprintln!("  ff --version                   # Show version information");
 }
 

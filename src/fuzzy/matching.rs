@@ -22,6 +22,30 @@ pub fn fuzzy_match(item: &str, query: &str) -> bool {
     query_chars.peek().is_none()
 }
 
+/// Find the positions of matched characters for highlighting
+pub fn find_match_positions(item: &str, query: &str) -> Vec<usize> {
+    if query.is_empty() {
+        return vec![];
+    }
+    
+    let mut positions = Vec::new();
+    let mut query_chars = query.chars().peekable();
+    let mut item_chars = item.chars().enumerate();
+    
+    while let Some(query_char) = query_chars.peek() {
+        if let Some((pos, item_char)) = item_chars.next() {
+            if item_char == *query_char {
+                positions.push(pos);
+                query_chars.next();
+            }
+        } else {
+            break;
+        }
+    }
+    
+    positions
+}
+
 pub fn sequential_filter(finder: &FuzzyFinder, query_lower: &str) -> Vec<String> {
     let mut results = Vec::new();
     for (i, item) in finder.items.iter().enumerate() {
