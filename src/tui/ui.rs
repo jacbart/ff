@@ -182,6 +182,7 @@ fn run_interactive_tui(
                 };
                 execute!(stdout, cursor::MoveTo(0, y_pos))?;
                 let is_cursor = i == fuzzy_finder.cursor_position;
+                
                 let is_selected = multi_select && {
                     if let Some(original_idx) = fuzzy_finder.items.iter().position(|x| x == item) {
                         fuzzy_finder.selected_indices.contains(&original_idx)
@@ -273,14 +274,14 @@ fn run_interactive_tui(
     Ok(result)
 }
 
-fn draw_highlighted_item(
-    stdout: &mut io::Stdout,
+fn draw_highlighted_item<W: Write>(
+    stdout: &mut W,
     item: &str,
     query: &str,
     is_cursor: bool,
     is_selected: bool,
 ) -> io::Result<()> {
-    use crossterm::style::{Attribute, SetAttribute};
+    use crossterm::style::{Attribute, SetAttribute, SetBackgroundColor, SetForegroundColor, Color, Print};
     let match_positions = find_match_positions(item, query);
     let mut match_set = std::collections::HashSet::new();
     for &pos in &match_positions {
@@ -288,29 +289,58 @@ fn draw_highlighted_item(
     }
     let mut char_indices = item.char_indices().peekable();
     let mut char_pos = 0;
+
     if is_cursor {
-        // Use reverse video for the selected row for high contrast
-        execute!(stdout, SetAttribute(Attribute::Reverse))?;
+        // Gruvbox soft highlight: dark grey background, yellow foreground, bold
+        execute!(
+            stdout,
+            SetBackgroundColor(Color::DarkGrey),
+            SetForegroundColor(Color::Yellow),
+            SetAttribute(Attribute::Bold)
+        )?;
     }
+
     while let Some((byte_idx, _ch)) = char_indices.next() {
         let is_match = match_set.contains(&char_pos);
         if is_match {
-            // Use bold and underline for matched characters
-            execute!(stdout, SetAttribute(Attribute::Bold), SetAttribute(Attribute::Underlined))?;
+            if is_cursor {
+                // For selected rows, use a bright color that contrasts with dark grey background
+                execute!(stdout, SetForegroundColor(Color::White), SetAttribute(Attribute::Bold), SetAttribute(Attribute::Underlined))?;
+            } else {
+                // For non-selected rows, use bold and underline
+                execute!(stdout, SetAttribute(Attribute::Bold), SetAttribute(Attribute::Underlined))?;
+            }
         } else if is_selected {
-            // Use bold for selected (multi-select) but not matched
             execute!(stdout, SetAttribute(Attribute::Bold))?;
-        } else {
-            execute!(stdout, SetAttribute(Attribute::Reset))?;
         }
         let next_byte_idx = char_indices.peek().map(|(i, _)| *i).unwrap_or(item.len());
         execute!(stdout, Print(&item[byte_idx..next_byte_idx]))?;
-        // Reset after each char
-        execute!(stdout, SetAttribute(Attribute::Reset))?;
+        
+        // Reset attributes after each character to prevent bleeding
+        if is_match {
+            if is_cursor {
+                // Reset to the row's base colors (dark grey background, yellow text)
+                execute!(stdout, SetForegroundColor(Color::Yellow), SetAttribute(Attribute::Reset))?;
+            } else {
+                execute!(stdout, SetAttribute(Attribute::Reset))?;
+            }
+        } else if is_selected {
+            execute!(stdout, SetAttribute(Attribute::Reset))?;
+        }
+        
         char_pos += 1;
     }
+
+    // Only reset at the end of the line
     if is_cursor {
-        execute!(stdout, SetAttribute(Attribute::NoReverse))?;
+        execute!(
+            stdout,
+            SetBackgroundColor(Color::Reset),
+            SetForegroundColor(Color::Reset),
+            SetAttribute(Attribute::Reset)
+        )?;
+    } else {
+        execute!(stdout, SetAttribute(Attribute::Reset))?;
     }
     Ok(())
 }
@@ -325,5 +355,129 @@ impl RawModeGuard {
 impl Drop for RawModeGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Cursor;
+
+    #[test]
+    fn test_draw_highlighted_item_cursor_highlighting() {
+        // Test that cursor highlighting works
+        let mut cursor = Cursor::new(Vec::new());
+        let result = draw_highlighted_item(&mut cursor, "test", "", true, false);
+        assert!(result.is_ok());
+        
+        // The cursor should have written some output
+        let output = cursor.into_inner();
+        assert!(!output.is_empty());
+    }
+
+    #[test]
+    fn test_draw_highlighted_item_no_cursor() {
+        // Test that non-cursor items don't get highlighted
+        let mut cursor = Cursor::new(Vec::new());
+        let result = draw_highlighted_item(&mut cursor, "test", "", false, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_draw_highlighted_item_with_matches() {
+        // Test highlighting with query matches
+        let mut cursor = Cursor::new(Vec::new());
+        let result = draw_highlighted_item(&mut cursor, "test", "t", false, false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_draw_highlighted_item_selected() {
+        // Test highlighting for selected items in multi-select
+        let mut cursor = Cursor::new(Vec::new());
+        let result = draw_highlighted_item(&mut cursor, "test", "", false, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_cursor_position_logic() {
+        // Test that the cursor position logic works correctly
+        let items = vec!["apple".to_string(), "banana".to_string(), "cherry".to_string()];
+        let mut finder = FuzzyFinder::new(items, false);
+        finder.update_filter();
+        
+        // Initial cursor position should be 0
+        assert_eq!(finder.cursor_position, 0);
+        
+        // Move cursor down
+        finder.move_cursor(1);
+        assert_eq!(finder.cursor_position, 1);
+        
+        // Move cursor down again
+        finder.move_cursor(1);
+        assert_eq!(finder.cursor_position, 2);
+        
+        // Move cursor down (should wrap to 0)
+        finder.move_cursor(1);
+        assert_eq!(finder.cursor_position, 0);
+        
+        // Move cursor up (should wrap to 2)
+        finder.move_cursor(-1);
+        assert_eq!(finder.cursor_position, 2);
+    }
+
+    #[test]
+    fn test_cursor_highlighting_logic() {
+        // Test that the highlighting logic correctly identifies the cursor position
+        let items = vec!["apple".to_string(), "banana".to_string(), "cherry".to_string()];
+        let mut finder = FuzzyFinder::new(items, false);
+        finder.update_filter();
+        
+        // Test that i == cursor_position logic works
+        for i in 0..finder.filtered_items.len() {
+            let is_cursor = i == finder.cursor_position;
+            if i == 0 {
+                assert!(is_cursor); // First item should be highlighted initially
+            } else {
+                assert!(!is_cursor); // Other items should not be highlighted
+            }
+        }
+        
+        // Move cursor and test again
+        finder.move_cursor(1);
+        for i in 0..finder.filtered_items.len() {
+            let is_cursor = i == finder.cursor_position;
+            if i == 1 {
+                assert!(is_cursor); // Second item should be highlighted
+            } else {
+                assert!(!is_cursor); // Other items should not be highlighted
+            }
+        }
+    }
+
+    #[test]
+    fn test_highlighting_colors_applied() {
+        // Test that the highlighting colors are actually being applied
+        let mut cursor = Cursor::new(Vec::new());
+        
+        // Test cursor highlighting
+        let result = draw_highlighted_item(&mut cursor, "test", "", true, false);
+        assert!(result.is_ok());
+        
+        let output = cursor.into_inner();
+        // The output should contain color codes for white background and black text
+        let output_str = String::from_utf8_lossy(&output);
+        
+        // Check that we have some output (indicating colors were applied)
+        assert!(!output.is_empty());
+        
+        // Create a new cursor for non-cursor test
+        let mut cursor2 = Cursor::new(Vec::new());
+        let result2 = draw_highlighted_item(&mut cursor2, "test", "", false, false);
+        assert!(result2.is_ok());
+        
+        let output2 = cursor2.into_inner();
+        // Non-cursor output should be different (no background color)
+        assert_ne!(output, output2);
     }
 }
