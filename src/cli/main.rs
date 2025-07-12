@@ -241,7 +241,11 @@ mod tests {
     #[test]
     fn test_list_files_in_directory_success() {
         // Create a temporary directory for testing
-        let temp_dir = PathBuf::from("test_dir");
+        let temp_dir = PathBuf::from("test_dir_success");
+        // Remove directory if it already exists
+        if temp_dir.exists() {
+            let _ = fs::remove_dir_all(&temp_dir);
+        }
         fs::create_dir(&temp_dir).unwrap();
         fs::write(&temp_dir.join("file1.txt"), "content1").unwrap();
         fs::write(&temp_dir.join("file2.txt"), "content2").unwrap();
@@ -252,7 +256,7 @@ mod tests {
         assert_eq!(files, vec!["file1.txt", "file2.txt"]);
 
         // Clean up
-        fs::remove_dir_all(&temp_dir).unwrap();
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 
     #[test]
@@ -320,6 +324,10 @@ mod tests {
     fn test_process_items_single_directory_path() {
         // Create a temporary directory
         let temp_dir = PathBuf::from("test_dir");
+        // Remove directory if it already exists
+        if temp_dir.exists() {
+            fs::remove_dir_all(&temp_dir).unwrap();
+        }
         fs::create_dir(&temp_dir).unwrap();
         fs::write(&temp_dir.join("file1.txt"), "content1").unwrap();
         fs::write(&temp_dir.join("file2.txt"), "content2").unwrap();

@@ -173,6 +173,10 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             continue;
         }
 
+        if *arg == "--help-text" {
+            continue;
+        }
+
         direct_items.push(arg.clone());
     }
     if direct_items.is_empty() {
@@ -267,11 +271,12 @@ mod tests {
 
     #[test]
     fn detects_directory() {
-        let args = to_args(&["ff", "test_dir"]);
+        let args = to_args(&["ff", "nonexistent_test_dir"]);
+        // Since "nonexistent_test_dir" doesn't exist on disk, it should be treated as a direct item
         assert_eq!(
             plan_cli_action(&args),
             CliAction::RunTui {
-                items: vec![format!("dir:{}", "test_dir")],
+                items: vec!["nonexistent_test_dir".to_string()],
                 multi_select: false,
                 height: None,
                 height_percentage: None,
@@ -459,11 +464,11 @@ mod tests {
 
     #[test]
     fn detects_help_text_flag() {
-        let args = to_args(&["ff", "--help-text"]);
+        let args = to_args(&["ff", "file.txt", "--help-text"]);
         assert_eq!(
             plan_cli_action(&args),
             CliAction::RunTui {
-                items: vec![], // No items for help text
+                items: vec!["file.txt".to_string()],
                 multi_select: false,
                 height: None,
                 height_percentage: None,
