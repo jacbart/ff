@@ -37,9 +37,6 @@ ff items.txt --multi-select
 # Direct items
 ff apple banana cherry
 
-# From stdin
-echo "apple\nbanana" | ff
-
 # Height options (non-fullscreen)
 ff items.txt --height 10
 ff items.txt --height-percentage 50
