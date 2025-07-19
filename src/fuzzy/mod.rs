@@ -1,5 +1,10 @@
 pub mod finder;
-pub mod matching;
+pub mod lsh;
+pub mod quicksort;
+pub mod stream;
+pub mod tree;
 
 pub use finder::FuzzyFinder;
-pub use matching::{fuzzy_match, parallel_filter, sequential_filter};
+pub use lsh::LSHIndex;
+pub use quicksort::quicksort;
+pub use stream::ItemStream;

@@ -1,12 +1,12 @@
 use std::env;
 use std::fs;
 
-use crate::bench;
 use crate::cli::planner::{plan_cli_action, CliAction};
 use crate::cli::tty::check_tty_requirements;
 use crate::config;
 use crate::get_build_info;
-use crate::tui::{run_tui, run_tui_with_config, TuiConfig};
+use crate::tui::{run_async_tui_with_config, run_tui, run_tui_with_config, TuiConfig};
+use crate::input::read_input;
 
 /// Read items from a file.
 pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
@@ -19,7 +19,7 @@ pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
                 .collect();
             Ok(items)
         }
-        Err(e) => Err(format!("Failed to read file: {}", e)),
+        Err(e) => Err(format!("Failed to read file: {e}")),
     }
 }
 
@@ -35,13 +35,13 @@ pub fn list_files_in_directory(dir_path: &str) -> Result<Vec<String>, String> {
                             files.push(file_name.to_string());
                         }
                     }
-                    Err(e) => return Err(format!("Failed to read directory entry: {}", e)),
+                    Err(e) => return Err(format!("Failed to read directory entry: {e}")),
                 }
             }
             files.sort();
             Ok(files)
         }
-        Err(e) => Err(format!("Failed to read directory: {}", e)),
+        Err(e) => Err(format!("Failed to read directory: {e}")),
     }
 }
 
@@ -55,9 +55,34 @@ pub fn process_items(items: Vec<String>) -> Result<Vec<String>, String> {
     // If items is a single file path, read from file
     let processed_items = if items.len() == 1 {
         let item = &items[0];
-        if item.starts_with("dir:") {
+        if let Some(dir_path) = item.strip_prefix("dir:") {
             // Directory path
-            let dir_path = &item[4..]; // Remove "dir:" prefix
+            list_files_in_directory(dir_path)?
+        } else if looks_like_file_path(item) {
+            read_items_from_file(item)?
+        } else {
+            items
+        }
+    } else {
+        items
+    };
+
+    if processed_items.is_empty() {
+        return Err("No items to search through".to_string());
+    }
+
+    Ok(processed_items)
+}
+
+/// Process items asynchronously from various sources including sockets
+pub async fn process_items_async(items: Vec<String>) -> Result<Vec<String>, String> {
+    // If items is a single special source, use async reading
+    let processed_items = if items.len() == 1 {
+        let item = &items[0];
+        if item.starts_with("unix://") || item.starts_with("http://") || item.starts_with("https://") {
+            read_input(item).await.map_err(|e| e.to_string())?
+        } else if let Some(dir_path) = item.strip_prefix("dir:") {
+            // Directory path
             list_files_in_directory(dir_path)?
         } else if looks_like_file_path(item) {
             read_items_from_file(item)?
@@ -99,7 +124,7 @@ pub fn run_tui_with_validation(
 
     match run_tui(processed_items, multi_select) {
         Ok(selected) => Ok(handle_tui_results(selected)),
-        Err(err) => Err(format!("TUI error: {}", err)),
+        Err(err) => Err(format!("TUI error: {err}")),
     }
 }
 
@@ -124,7 +149,32 @@ pub fn run_tui_with_height_validation(
 
     match run_tui_with_config(processed_items, multi_select, config) {
         Ok(selected) => Ok(handle_tui_results(selected)),
-        Err(err) => Err(format!("TUI error: {}", err)),
+        Err(err) => Err(format!("TUI error: {err}")),
+    }
+}
+
+/// Run async TUI with height configuration and validation.
+pub async fn run_async_tui_with_height_validation(
+    items: Vec<String>,
+    multi_select: bool,
+    height: Option<u16>,
+    height_percentage: Option<f32>,
+) -> Result<Vec<String>, String> {
+    let processed_items = process_items_async(items).await?;
+
+    validate_tty_requirements()?;
+
+    let config = if let Some(h) = height {
+        TuiConfig::with_height(h)
+    } else if let Some(p) = height_percentage {
+        TuiConfig::with_height_percentage(p)
+    } else {
+        TuiConfig::fullscreen()
+    };
+
+    match run_async_tui_with_config(processed_items, multi_select, config).await {
+        Ok(selected) => Ok(handle_tui_results(selected)),
+        Err(err) => Err(format!("Async TUI error: {err}")),
     }
 }
 
@@ -140,31 +190,33 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
             config::print_usage();
             Ok(())
         }
-        CliAction::RunBenchmark { multi_select: _ } => {
-            bench::run_all_benchmarks();
-            Ok(())
-        }
-        CliAction::RunTui {
+        CliAction::RunAsyncTui {
             items,
             multi_select,
             height,
             height_percentage,
             show_help_text,
         } => {
-            let processed_items = process_items(items)?;
-            let mut config = TuiConfig::default();
-            config.fullscreen = height.is_none() && height_percentage.is_none();
-            config.height = height;
-            config.height_percentage = height_percentage;
-            config.show_help_text = show_help_text;
-            let selected = run_tui_with_config(processed_items, multi_select, config)?;
-            for item in selected {
-                println!("{}", item);
-            }
+            // For async TUI, we need to run it in a tokio runtime
+            let rt = tokio::runtime::Runtime::new()?;
+            let _result = rt.block_on(async {
+                let processed_items = process_items_async(items).await?;
+                let config = TuiConfig {
+                    fullscreen: height.is_none() && height_percentage.is_none(),
+                    height,
+                    height_percentage,
+                    show_help_text,
+                };
+                let selected =
+                    run_async_tui_with_config(processed_items, multi_select, config).await?;
+                Ok::<Vec<String>, Box<dyn std::error::Error>>(selected)
+            })?;
+
+            // Don't print here - the TUI will handle output
             Ok(())
         }
         CliAction::Error(msg) => {
-            eprintln!("Error: {}", msg);
+            eprintln!("Error: {msg}");
             std::process::exit(1);
         }
     }
@@ -247,10 +299,10 @@ mod tests {
             let _ = fs::remove_dir_all(&temp_dir);
         }
         fs::create_dir(&temp_dir).unwrap();
-        fs::write(&temp_dir.join("file1.txt"), "content1").unwrap();
-        fs::write(&temp_dir.join("file2.txt"), "content2").unwrap();
+        fs::write(temp_dir.join("file1.txt"), "content1").unwrap();
+        fs::write(temp_dir.join("file2.txt"), "content2").unwrap();
 
-        let result = list_files_in_directory(&temp_dir.to_str().unwrap());
+        let result = list_files_in_directory(temp_dir.to_str().unwrap());
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files, vec!["file1.txt", "file2.txt"]);
@@ -265,7 +317,7 @@ mod tests {
         let temp_dir = PathBuf::from("test_empty_dir");
         fs::create_dir(&temp_dir).unwrap();
 
-        let result = list_files_in_directory(&temp_dir.to_str().unwrap());
+        let result = list_files_in_directory(temp_dir.to_str().unwrap());
         assert!(result.is_ok());
         let files = result.unwrap();
         assert_eq!(files, Vec::<String>::new());
@@ -329,10 +381,10 @@ mod tests {
             fs::remove_dir_all(&temp_dir).unwrap();
         }
         fs::create_dir(&temp_dir).unwrap();
-        fs::write(&temp_dir.join("file1.txt"), "content1").unwrap();
-        fs::write(&temp_dir.join("file2.txt"), "content2").unwrap();
+        fs::write(temp_dir.join("file1.txt"), "content1").unwrap();
+        fs::write(temp_dir.join("file2.txt"), "content2").unwrap();
 
-        let items = vec!["dir:".to_string() + &temp_dir.to_str().unwrap()];
+        let items = vec!["dir:".to_string() + temp_dir.to_str().unwrap()];
         let result = process_items(items);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), vec!["file1.txt", "file2.txt"]);

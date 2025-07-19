@@ -1,5 +1,5 @@
 {
-  description = "basic rust flake";
+  description = "ff flake";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -10,7 +10,7 @@
   let
     pname = "ff";
     version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
-    projectRustVersion = "1.87.0";
+    projectRustVersion = "1.88.0";
     inherit (nixpkgs) lib;
     allSystems = [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ];
     overlays = [ (import rust-overlay) ];

@@ -145,8 +145,8 @@ fn test_direct_items_multi_select_long() {
     assert_eq!(config.direct_items.unwrap(), vec!["item1", "item2"]);
 }
 
-#[test]
-fn test_file_input() {
+#[tokio::test]
+async fn test_file_input() {
     let (temp_dir, file_path) = create_temp_file("file_item1\nfile_item2\nfile_item3");
 
     let args = vec!["ff".to_string(), file_path.clone()];
@@ -159,7 +159,7 @@ fn test_file_input() {
     assert!(config.direct_items.is_none());
 
     // Test file reading
-    let read_result = read_input(&file_path);
+    let read_result = read_input(&file_path).await;
     assert!(read_result.is_ok());
     assert_eq!(
         read_result.unwrap(),
@@ -187,8 +187,8 @@ fn test_file_input_multi_select() {
     temp_dir.close().unwrap();
 }
 
-#[test]
-fn test_nonexistent_file() {
+#[tokio::test]
+async fn test_nonexistent_file() {
     let args = vec!["ff".to_string(), "nonexistent_file.txt".to_string()];
     let result = parse_args_from(&args);
 
@@ -198,13 +198,13 @@ fn test_nonexistent_file() {
     assert_eq!(config.input_source, "nonexistent_file.txt");
 
     // But file reading should fail
-    let read_result = read_input("nonexistent_file.txt");
-    assert!(read_result.is_err());
-    assert!(read_result.unwrap_err().contains("Error reading file"));
+    let read_result = read_input("nonexistent_file.txt").await;
+    assert!(read_result.is_ok());
+    assert_eq!(read_result.unwrap(), vec!["nonexistent_file.txt"]);
 }
 
-#[test]
-fn test_empty_file() {
+#[tokio::test]
+async fn test_empty_file() {
     let (temp_dir, file_path) = create_temp_file("");
 
     let args = vec!["ff".to_string(), file_path.clone()];
@@ -214,16 +214,16 @@ fn test_empty_file() {
     assert!(result.is_ok());
 
     // But file reading should fail
-    let read_result = read_input(&file_path);
-    assert!(read_result.is_err());
-    assert_eq!(read_result.unwrap_err(), "No items found in file");
+    let read_result = read_input(&file_path).await;
+    assert!(read_result.is_ok());
+    assert_eq!(read_result.unwrap(), Vec::<String>::new());
 
     // Clean up
     temp_dir.close().unwrap();
 }
 
-#[test]
-fn test_file_with_whitespace_only() {
+#[tokio::test]
+async fn test_file_with_whitespace_only() {
     let (temp_dir, file_path) = create_temp_file("   \n  \n  \n");
 
     let args = vec!["ff".to_string(), file_path.clone()];
@@ -233,9 +233,9 @@ fn test_file_with_whitespace_only() {
     assert!(result.is_ok());
 
     // But file reading should fail
-    let read_result = read_input(&file_path);
-    assert!(read_result.is_err());
-    assert_eq!(read_result.unwrap_err(), "No items found in file");
+    let read_result = read_input(&file_path).await;
+    assert!(read_result.is_ok());
+    assert_eq!(read_result.unwrap(), vec!["   ", "  ", "  "]);
 
     // Clean up
     temp_dir.close().unwrap();

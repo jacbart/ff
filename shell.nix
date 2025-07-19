@@ -9,6 +9,7 @@ pkgs.mkShell {
   buildInputs = with pkgs; [
     (rustVersion.override { extensions = [ "rust-src" ]; })
     bacon
+    lldb
     rust-analyzer
   ];
   RUST_LOG = "debug";

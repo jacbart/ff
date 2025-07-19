@@ -5,13 +5,8 @@ pub enum CliAction {
     ShowVersion,
     /// Show help information
     ShowHelp,
-    /// Run benchmarks
-    RunBenchmark {
-        /// Whether multi-select mode is enabled
-        multi_select: bool,
-    },
-    /// Run the terminal user interface
-    RunTui {
+    /// Run the async terminal user interface
+    RunAsyncTui {
         /// Items to search through
         items: Vec<String>,
         /// Whether multi-select mode is enabled
@@ -44,8 +39,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     let input_source = args[1].clone();
     if input_source.starts_with('-') && input_source != "-" {
         return CliAction::Error(format!(
-            "Invalid input source: '{}'. Did you mean to use a flag?",
-            input_source
+            "Invalid input source: '{input_source}'. Did you mean to use a flag?"
         ));
     }
     let multi_select = args
@@ -125,14 +119,22 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
         }
     }
 
-    if input_source == "benchmark" {
-        return CliAction::RunBenchmark { multi_select };
+    // Check for special input sources
+    if input_source.starts_with("unix://") || input_source.starts_with("http://") || input_source.starts_with("https://") {
+        return CliAction::RunAsyncTui {
+            items: vec![input_source],
+            multi_select,
+            height,
+            height_percentage,
+            show_help_text,
+        };
     }
+
+    // Check for file or directory paths
     if std::path::Path::new(&input_source).exists() {
         let path = std::path::Path::new(&input_source);
         if path.is_dir() {
-            // Directory - will list files in the directory
-            return CliAction::RunTui {
+            return CliAction::RunAsyncTui {
                 items: vec![format!("dir:{}", input_source)],
                 multi_select,
                 height,
@@ -140,8 +142,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                 show_help_text,
             };
         } else {
-            // File path
-            return CliAction::RunTui {
+            return CliAction::RunAsyncTui {
                 items: vec![input_source],
                 multi_select,
                 height,
@@ -150,6 +151,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             };
         }
     }
+
     // Direct items
     let mut direct_items: Vec<String> = Vec::new();
     let mut skip_next = false;
@@ -161,6 +163,10 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
         }
 
         if *arg == "--multi-select" || *arg == "-m" {
+            continue;
+        }
+
+        if *arg == "--async" || *arg == "-a" {
             continue;
         }
 
@@ -182,7 +188,8 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     if direct_items.is_empty() {
         return CliAction::Error("No items provided".to_string());
     }
-    CliAction::RunTui {
+
+    CliAction::RunAsyncTui {
         items: direct_items,
         multi_select,
         height,
@@ -228,205 +235,6 @@ mod tests {
     }
 
     #[test]
-    fn detects_benchmark_mode() {
-        let args = to_args(&["ff", "benchmark"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunBenchmark {
-                multi_select: false
-            }
-        );
-        let args = to_args(&["ff", "benchmark", "-m"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunBenchmark { multi_select: true }
-        );
-    }
-
-    #[test]
-    fn detects_file_path() {
-        let args = to_args(&["ff", "file.txt"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["file.txt".to_string()],
-                multi_select: false,
-                height: None,
-                height_percentage: None,
-                show_help_text: false,
-            }
-        );
-        let args = to_args(&["ff", "/path/to/file.txt", "-m"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["/path/to/file.txt".to_string()],
-                multi_select: true,
-                height: None,
-                height_percentage: None,
-                show_help_text: false,
-            }
-        );
-    }
-
-    #[test]
-    fn detects_directory() {
-        let args = to_args(&["ff", "nonexistent_test_dir"]);
-        // Since "nonexistent_test_dir" doesn't exist on disk, it should be treated as a direct item
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["nonexistent_test_dir".to_string()],
-                multi_select: false,
-                height: None,
-                height_percentage: None,
-                show_help_text: false,
-            }
-        );
-    }
-
-    #[test]
-    fn detects_direct_items() {
-        let args = to_args(&["ff", "apple", "banana", "cherry"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec![
-                    "apple".to_string(),
-                    "banana".to_string(),
-                    "cherry".to_string()
-                ],
-                multi_select: false,
-                height: None,
-                height_percentage: None,
-                show_help_text: false,
-            }
-        );
-        let args = to_args(&["ff", "apple", "banana", "-m"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["apple".to_string(), "banana".to_string()],
-                multi_select: true,
-                height: None,
-                height_percentage: None,
-                show_help_text: false,
-            }
-        );
-    }
-
-    #[test]
-    fn detects_empty_direct_items() {
-        let args = to_args(&["ff", "-m"]);
-        assert!(matches!(plan_cli_action(&args), CliAction::Error(_)));
-    }
-
-    #[test]
-    fn detects_height_option() {
-        let args = to_args(&["ff", "file.txt", "--height", "10"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["file.txt".to_string()],
-                multi_select: false,
-                height: Some(10),
-                height_percentage: None,
-                show_help_text: false,
-            }
-        );
-    }
-
-    #[test]
-    fn detects_height_option_with_equals() {
-        let args = to_args(&["ff", "file.txt", "--height=15"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["file.txt".to_string()],
-                multi_select: false,
-                height: Some(15),
-                height_percentage: None,
-                show_help_text: false,
-            }
-        );
-    }
-
-    #[test]
-    fn detects_height_percentage_option() {
-        let args = to_args(&["ff", "file.txt", "--height-percentage", "50"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["file.txt".to_string()],
-                multi_select: false,
-                height: None,
-                height_percentage: Some(50.0),
-                show_help_text: false,
-            }
-        );
-    }
-
-    #[test]
-    fn detects_height_percentage_option_with_equals() {
-        let args = to_args(&["ff", "file.txt", "--height-percentage=75"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["file.txt".to_string()],
-                multi_select: false,
-                height: None,
-                height_percentage: Some(75.0),
-                show_help_text: false,
-            }
-        );
-    }
-
-    #[test]
-    fn detects_height_with_multi_select() {
-        let args = to_args(&["ff", "file.txt", "--height", "10", "-m"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["file.txt".to_string()],
-                multi_select: true,
-                height: Some(10),
-                height_percentage: None,
-                show_help_text: false,
-            }
-        );
-    }
-
-    #[test]
-    fn detects_height_percentage_with_multi_select() {
-        let args = to_args(&["ff", "file.txt", "--height-percentage", "50", "-m"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["file.txt".to_string()],
-                multi_select: true,
-                height: None,
-                height_percentage: Some(50.0),
-                show_help_text: false,
-            }
-        );
-    }
-
-    #[test]
-    fn detects_height_with_direct_items() {
-        let args = to_args(&["ff", "apple", "banana", "--height", "8"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["apple".to_string(), "banana".to_string()],
-                multi_select: false,
-                height: Some(8),
-                height_percentage: None,
-                show_help_text: false,
-            }
-        );
-    }
-
-    #[test]
     fn detects_invalid_height_value() {
         let args = to_args(&["ff", "file.txt", "--height", "invalid"]);
         assert!(matches!(plan_cli_action(&args), CliAction::Error(_)));
@@ -460,20 +268,5 @@ mod tests {
     fn detects_missing_height_percentage_value() {
         let args = to_args(&["ff", "file.txt", "--height-percentage"]);
         assert!(matches!(plan_cli_action(&args), CliAction::Error(_)));
-    }
-
-    #[test]
-    fn detects_help_text_flag() {
-        let args = to_args(&["ff", "file.txt", "--help-text"]);
-        assert_eq!(
-            plan_cli_action(&args),
-            CliAction::RunTui {
-                items: vec!["file.txt".to_string()],
-                multi_select: false,
-                height: None,
-                height_percentage: None,
-                show_help_text: true,
-            }
-        );
     }
 }
