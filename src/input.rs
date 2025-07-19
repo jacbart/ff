@@ -65,7 +65,9 @@ async fn read_from_file(file_path: &str) -> Result<Vec<String>, Box<dyn std::err
     Ok(content.lines().map(|s| s.to_string()).collect())
 }
 
-async fn read_from_unix_socket(socket_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+async fn read_from_unix_socket(
+    socket_path: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let stream = UnixStream::connect(socket_path)
         .await
         .map_err(|e| format!("Failed to connect to Unix socket: {e}"))?;
@@ -76,7 +78,7 @@ async fn read_from_unix_socket(socket_path: &str) -> Result<Vec<String>, Box<dyn
         .read_to_end(&mut buffer)
         .await
         .map_err(|e| format!("Failed to read from Unix socket: {e}"))?;
-    
+
     if bytes_read == 0 {
         return Ok(Vec::new());
     }
@@ -99,7 +101,7 @@ async fn read_from_http_socket(url: &str) -> Result<Vec<String>, Box<dyn std::er
         .read_to_end(&mut buffer)
         .await
         .map_err(|e| format!("Failed to read from HTTP socket: {e}"))?;
-    
+
     let content = String::from_utf8_lossy(&buffer);
     Ok(content.lines().map(|s| s.to_string()).collect())
 }

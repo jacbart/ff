@@ -72,8 +72,9 @@ pub fn parse_args() -> Result<Config, String> {
 
 /// Print usage information for the command line tool.
 pub fn print_usage() {
-    eprintln!("Usage: ff <input-source> [--multi-select] [--height <lines>] [--height-percentage <percent>]");
-    eprintln!("   or: ff <item1> [item2] [item3] ... [--multi-select] [--height <lines>] [--height-percentage <percent>]");
+    eprintln!("Usage: ff <input-source> [--multi-select] [--height <lines>] [--height-percentage <percent>] [--query <text>]");
+    eprintln!("   or: ff <item1> [item2] [item3] ... [--multi-select] [--height <lines>] [--height-percentage <percent>] [--query <text>]");
+    eprintln!("   or: ff --zsh|--bash|--fish");
     eprintln!();
     eprintln!("Input Sources:");
     eprintln!("  file.txt              Read items from a file");
@@ -89,8 +90,17 @@ pub fn print_usage() {
         "  --height <lines>        Set TUI height to specific number of lines (non-fullscreen mode)"
     );
     eprintln!("  --height-percentage <percent>  Set TUI height as percentage of terminal (non-fullscreen mode)");
+    eprintln!("  --query <text>        Set initial search query when TUI starts");
     eprintln!("  -h, --help           Show this help message");
     eprintln!("  -V, --version        Show version information");
+    eprintln!("  --zsh                Generate Zsh shell integration script");
+    eprintln!("  --bash               Generate Bash shell integration script");
+    eprintln!("  --fish               Generate Fish shell integration script");
+    eprintln!();
+    eprintln!("Shell Integration:");
+    eprintln!("  ff --zsh > ~/.zshrc.local && source ~/.zshrc.local");
+    eprintln!("  ff --bash > ~/.bashrc.local && source ~/.bashrc.local");
+    eprintln!("  ff --fish > ~/.config/fish/functions/ff.fish");
     eprintln!();
     eprintln!("TUI Modes:");
     eprintln!("  Fullscreen (default): Full terminal interface with borders");
@@ -101,6 +111,7 @@ pub fn print_usage() {
     eprintln!("  Real-time highlighting of matched characters");
     eprintln!("  Async support for external services and sockets");
     eprintln!("  Efficient quicksort-based result ranking");
+    eprintln!("  Shell integration for file selection, directory navigation, and history search");
     eprintln!();
     eprintln!("TUI Controls:");
     eprintln!("  Type to search        Filter items as you type");
@@ -109,6 +120,12 @@ pub fn print_usage() {
     eprintln!("  Tab/Space            Toggle selection (multi-select mode only)");
     eprintln!("  Esc                  Exit without selection");
     eprintln!("  Ctrl+Q               Exit without selection");
+    eprintln!();
+    eprintln!("Shell Integration Controls:");
+    eprintln!("  Ctrl+T               Select files and paste into command line");
+    eprintln!("  Ctrl+R               Search command history");
+    eprintln!("  Alt+C                Navigate to selected directory");
+    eprintln!("  **<tab>              Trigger fuzzy completion");
     eprintln!();
     eprintln!("Examples:");
     eprintln!("  ff file.txt                    # Read from file, single select");
@@ -120,7 +137,10 @@ pub fn print_usage() {
     eprintln!("  ff apple banana cherry -m      # Direct items, multi-select");
     eprintln!("  ff file.txt --height 10        # Non-fullscreen mode, 10 lines high");
     eprintln!("  ff file.txt --height-percentage 50  # Non-fullscreen mode, 50% of terminal");
+    eprintln!("  ff file.txt --query 'test'     # Start with 'test' as initial query");
     eprintln!("  ff --version                    # Show version information");
+    eprintln!("  ff --zsh                        # Generate Zsh integration script");
+    eprintln!("  ff --bash                       # Generate Bash integration script");
 }
 
 #[cfg(test)]

@@ -5,6 +5,11 @@ pub enum CliAction {
     ShowVersion,
     /// Show help information
     ShowHelp,
+    /// Generate shell integration script
+    GenerateShellIntegration {
+        /// Shell type (zsh, bash, fish)
+        shell_type: String,
+    },
     /// Run the async terminal user interface
     RunAsyncTui {
         /// Items to search through
@@ -17,6 +22,8 @@ pub enum CliAction {
         height_percentage: Option<f32>,
         /// Whether to show help text
         show_help_text: bool,
+        /// Initial query to set when TUI starts
+        initial_query: Option<String>,
     },
     /// Error with message
     Error(String),
@@ -33,6 +40,14 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return CliAction::ShowHelp;
     }
+
+    // Check for shell integration flags
+    if let Some(shell_type) = crate::cli::get_shell_type(args) {
+        return CliAction::GenerateShellIntegration {
+            shell_type: shell_type.to_string(),
+        };
+    }
+
     if args.len() < 2 {
         return CliAction::Error("Missing required argument: input-source or items".to_string());
     }
@@ -50,6 +65,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     let mut height: Option<u16> = None;
     let mut height_percentage: Option<f32> = None;
     let mut show_help_text = false;
+    let mut initial_query: Option<String> = None;
 
     for (i, arg) in args.iter().enumerate() {
         if arg == "--height" && i + 1 < args.len() {
@@ -102,6 +118,12 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                     );
                 }
             }
+        } else if arg == "--query" && i + 1 < args.len() {
+            initial_query = Some(args[i + 1].clone());
+        } else if arg.starts_with("--query=") {
+            if let Some(value) = arg.strip_prefix("--query=") {
+                initial_query = Some(value.to_string());
+            }
         } else if arg == "--help-text" {
             show_help_text = true;
         }
@@ -117,16 +139,23 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                 "Missing height percentage value after --height-percentage".to_string(),
             );
         }
+        if arg == "--query" && i + 1 >= args.len() {
+            return CliAction::Error("Missing query value after --query".to_string());
+        }
     }
 
     // Check for special input sources
-    if input_source.starts_with("unix://") || input_source.starts_with("http://") || input_source.starts_with("https://") {
+    if input_source.starts_with("unix://")
+        || input_source.starts_with("http://")
+        || input_source.starts_with("https://")
+    {
         return CliAction::RunAsyncTui {
             items: vec![input_source],
             multi_select,
             height,
             height_percentage,
             show_help_text,
+            initial_query,
         };
     }
 
@@ -140,6 +169,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                 height,
                 height_percentage,
                 show_help_text,
+                initial_query,
             };
         } else {
             return CliAction::RunAsyncTui {
@@ -148,6 +178,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                 height,
                 height_percentage,
                 show_help_text,
+                initial_query,
             };
         }
     }
@@ -179,6 +210,11 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             continue;
         }
 
+        if *arg == "--query" {
+            skip_next = true;
+            continue;
+        }
+
         if *arg == "--help-text" {
             continue;
         }
@@ -195,6 +231,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
         height,
         height_percentage,
         show_help_text,
+        initial_query,
     }
 }
 
@@ -267,6 +304,12 @@ mod tests {
     #[test]
     fn detects_missing_height_percentage_value() {
         let args = to_args(&["ff", "file.txt", "--height-percentage"]);
+        assert!(matches!(plan_cli_action(&args), CliAction::Error(_)));
+    }
+
+    #[test]
+    fn detects_missing_query_value() {
+        let args = to_args(&["ff", "file.txt", "--query"]);
         assert!(matches!(plan_cli_action(&args), CliAction::Error(_)));
     }
 }

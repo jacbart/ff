@@ -5,8 +5,8 @@ use crate::cli::planner::{plan_cli_action, CliAction};
 use crate::cli::tty::check_tty_requirements;
 use crate::config;
 use crate::get_build_info;
-use crate::tui::{run_async_tui_with_config, run_tui, run_tui_with_config, TuiConfig};
 use crate::input::read_input;
+use crate::tui::{run_async_tui_with_config, run_tui, run_tui_with_config, TuiConfig};
 
 /// Read items from a file.
 pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
@@ -79,7 +79,10 @@ pub async fn process_items_async(items: Vec<String>) -> Result<Vec<String>, Stri
     // If items is a single special source, use async reading
     let processed_items = if items.len() == 1 {
         let item = &items[0];
-        if item.starts_with("unix://") || item.starts_with("http://") || item.starts_with("https://") {
+        if item.starts_with("unix://")
+            || item.starts_with("http://")
+            || item.starts_with("https://")
+        {
             read_input(item).await.map_err(|e| e.to_string())?
         } else if let Some(dir_path) = item.strip_prefix("dir:") {
             // Directory path
@@ -190,12 +193,18 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
             config::print_usage();
             Ok(())
         }
+        CliAction::GenerateShellIntegration { shell_type } => {
+            let script = crate::cli::generate_shell_integration(&shell_type);
+            println!("{script}");
+            Ok(())
+        }
         CliAction::RunAsyncTui {
             items,
             multi_select,
             height,
             height_percentage,
             show_help_text,
+            initial_query,
         } => {
             // For async TUI, we need to run it in a tokio runtime
             let rt = tokio::runtime::Runtime::new()?;
@@ -206,6 +215,7 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                     height,
                     height_percentage,
                     show_help_text,
+                    initial_query,
                 };
                 let selected =
                     run_async_tui_with_config(processed_items, multi_select, config).await?;

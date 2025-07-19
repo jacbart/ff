@@ -12,6 +12,30 @@ pub fn has_multi_select_flag(args: &[String]) -> bool {
         .any(|arg| arg == "--multi-select" || arg == "-m")
 }
 
+/// Check if any help flag is present in the arguments.
+pub fn has_help_flag(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--help" || arg == "-h")
+}
+
+/// Check if any shell integration flag is present in the arguments.
+pub fn has_shell_integration_flag(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "--zsh" || arg == "--bash" || arg == "--fish")
+}
+
+/// Get the shell type from shell integration flags.
+pub fn get_shell_type(args: &[String]) -> Option<&str> {
+    for arg in args {
+        match arg.as_str() {
+            "--zsh" => return Some("zsh"),
+            "--bash" => return Some("bash"),
+            "--fish" => return Some("fish"),
+            _ => continue,
+        }
+    }
+    None
+}
+
 /// Check if a string represents a file path.
 pub fn is_file_path(arg: &str) -> bool {
     arg != "--multi-select" && arg != "--help" && arg != "-h" && Path::new(arg).exists()

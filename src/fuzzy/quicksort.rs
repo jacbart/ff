@@ -8,7 +8,7 @@ where
     if items.len() <= 1 {
         return;
     }
-    
+
     let pivot_index = partition(items, compare);
     quicksort(&mut items[..pivot_index], compare);
     quicksort(&mut items[pivot_index + 1..], compare);
@@ -21,14 +21,14 @@ where
     let len = items.len();
     let pivot_index = len - 1;
     let mut store_index = 0;
-    
+
     for i in 0..len - 1 {
         if compare(&items[i], &items[pivot_index]) == Ordering::Less {
             items.swap(i, store_index);
             store_index += 1;
         }
     }
-    
+
     items.swap(pivot_index, store_index);
     store_index
 }
@@ -71,4 +71,4 @@ mod tests {
         quicksort(&mut items, &|a, b| a.cmp(b));
         assert_eq!(items, vec![1, 1, 2, 3, 3, 4, 5, 5, 5, 6, 9]);
     }
-} 
+}
