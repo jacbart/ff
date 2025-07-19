@@ -1,6 +1,6 @@
 [package]
 name = "ff"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 description = "small simple not so percise finder"
 authors = ["jacbart"]
@@ -13,6 +13,8 @@ build = "build.rs"
 [dependencies]
 crossterm = "0.29"
 rayon = "1.10"
+tokio = { version = "1.0", features = ["full"] }
+futures = "0.3"
 
 [dev-dependencies]
 tempfile = "3.20"

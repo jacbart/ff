@@ -1,10 +1,11 @@
 //! # ff - Fuzzy Finder Library
 //!
-//! A simple, efficient fuzzy finder library and TUI for Rust applications.
+//! A fast, lightweight fuzzy finder library with async streaming, LSH, and quicksort.
 //!
 //! ## Features
-//! - Fuzzy matching (substring and character sequence)
-//! - Case-insensitive search
+//! - Async fuzzy matching with streaming
+//! - Locality Sensitive Hashing (LSH) for similarity grouping
+//! - Quicksort for fast result sorting
 //! - Multi-select support
 //! - TUI interface with keyboard navigation
 //! - Configurable height for the TUI
@@ -14,32 +15,17 @@
 //! ```rust
 //! use ff::FuzzyFinder;
 //!
-//! let items = vec!["apple".to_string(), "banana".to_string(), "cherry".to_string()];
-//! let mut finder = FuzzyFinder::new(items, false);
-//! finder.query = "app".to_string();
-//! finder.update_filter();
-//! assert_eq!(finder.filtered_items, vec!["apple".to_string()]);
-//! ```
-//!
-//! ## TUI Usage
-//!
-//! ```no_run
-//! use ff::run_tui;
-//! let items = vec!["item1".to_string(), "item2".to_string()];
-//! let _ = run_tui(items, false);
-//! ```
-//!
-//! ## TUI with Height Configuration
-//!
-//! ```no_run
-//! use ff::{run_tui_with_config, TuiConfig};
-//! let items = vec!["item1".to_string(), "item2".to_string()];
-//! let config = TuiConfig::with_height(10);
-//! let _ = run_tui_with_config(items, false, config);
+//! #[tokio::main]
+//! async fn main() {
+//!     let items = vec!["apple".to_string(), "banana".to_string(), "cherry".to_string()];
+//!     let mut finder = FuzzyFinder::with_items_async(items, false).await;
+//!     finder.set_query("app".to_string()).await;
+//!     let filtered = finder.get_filtered_items();
+//!     assert_eq!(filtered.len(), 1);
+//! }
 //! ```
 
 // === Internal Modules ===
-pub mod bench;
 pub mod cli;
 pub mod config;
 pub mod fuzzy;
@@ -48,18 +34,22 @@ pub mod tui;
 
 // === Public API Exports ===
 
-/// Fuzzy finder for searching through lists of items.
+/// Async fuzzy finder with streaming capabilities, LSH, and quicksort.
 ///
-/// Supports single-select and multi-select modes, with fuzzy matching.
+/// Supports async operations, locality sensitive hashing, and efficient sorting.
 ///
 /// # Example
 /// ```no_run
 /// use ff::FuzzyFinder;
-/// let items = vec!["apple".to_string(), "banana".to_string()];
-/// let mut finder = FuzzyFinder::new(items, false);
-/// finder.query = "app".to_string();
-/// finder.update_filter();
-/// assert_eq!(finder.filtered_items, vec!["apple".to_string()]);
+/// use tokio;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let items = vec!["apple".to_string(), "banana".to_string()];
+///     let mut finder = FuzzyFinder::with_items_async(items, false).await;
+///     finder.set_query("app".to_string()).await;
+///     let filtered = finder.get_filtered_items();
+/// }
 /// ```
 pub use fuzzy::FuzzyFinder;
 
@@ -120,9 +110,9 @@ pub fn get_build_info() -> String {
         build_timestamp.to_string()
     };
     if date.is_empty() {
-        format!("ff v{}", version)
+        format!("ff v{version}")
     } else {
-        format!("ff v{} (built: {})", version, date)
+        format!("ff v{version} (built: {date})")
     }
 }
 
@@ -154,7 +144,7 @@ fn timestamp_to_date(timestamp: i64) -> String {
             break;
         }
     }
-    format!("{:04}-{:02}-{:02}", year, month, day)
+    format!("{year:04}-{month:02}-{day:02}")
 }
 
 fn is_leap_year(year: i64) -> bool {

@@ -23,8 +23,7 @@ pub fn parse_args_from(args: &[String]) -> Result<Config, String> {
     let input_source = args[1].clone();
     if input_source.starts_with('-') {
         return Err(format!(
-            "Invalid input source: '{}'. Did you mean to use a flag?",
-            input_source
+            "Invalid input source: '{input_source}'. Did you mean to use a flag?"
         ));
     }
     if input_source == "benchmark" {
@@ -76,40 +75,52 @@ pub fn print_usage() {
     eprintln!("Usage: ff <input-source> [--multi-select] [--height <lines>] [--height-percentage <percent>]");
     eprintln!("   or: ff <item1> [item2] [item3] ... [--multi-select] [--height <lines>] [--height-percentage <percent>]");
     eprintln!();
-    eprintln!("Arguments:");
-    eprintln!("  input-source    File path to read items from");
-    eprintln!("  item1, item2, ...  Direct list of items to search through");
+    eprintln!("Input Sources:");
+    eprintln!("  file.txt              Read items from a file");
+    eprintln!("  ./src/                Read files from a directory");
+    eprintln!("  unix:///path/socket   Read from Unix socket");
+    eprintln!("  http://host:port      Read from HTTP endpoint");
+    eprintln!("  https://host:port     Read from HTTPS endpoint");
+    eprintln!("  item1 item2 item3     Direct list of items");
     eprintln!();
     eprintln!("Options:");
-    eprintln!("  --multi-select, -m  Allow selecting multiple items (default: single select)");
+    eprintln!("  --multi-select, -m    Allow selecting multiple items (default: single select)");
     eprintln!(
-        "  --height <lines>    Set TUI height to specific number of lines (non-fullscreen mode)"
+        "  --height <lines>        Set TUI height to specific number of lines (non-fullscreen mode)"
     );
     eprintln!("  --height-percentage <percent>  Set TUI height as percentage of terminal (non-fullscreen mode)");
-    eprintln!("  -h, --help      Show this help message");
-    eprintln!("  -V, --version   Show version information");
+    eprintln!("  -h, --help           Show this help message");
+    eprintln!("  -V, --version        Show version information");
     eprintln!();
     eprintln!("TUI Modes:");
     eprintln!("  Fullscreen (default): Full terminal interface with borders");
-    eprintln!("  Non-fullscreen: Compact interface without borders, search bar as input line");
+    eprintln!("  Non-fullscreen: Compact interface without borders, renders below command line");
+    eprintln!();
+    eprintln!("Features:");
+    eprintln!("  Fast fuzzy matching with binary tree and LSH indexing");
+    eprintln!("  Real-time highlighting of matched characters");
+    eprintln!("  Async support for external services and sockets");
+    eprintln!("  Efficient quicksort-based result ranking");
     eprintln!();
     eprintln!("TUI Controls:");
-    eprintln!("  Type to search  Filter items as you type");
-    eprintln!("  ↑/↓ arrows      Navigate through results");
-    eprintln!("  Enter           Select item (single mode) or confirm selection (multi mode)");
-    eprintln!("  Tab/Space       Toggle selection (multi-select mode only)");
-    eprintln!("  Esc             Exit without selection");
-    eprintln!("  Ctrl+Q          Exit without selection");
+    eprintln!("  Type to search        Filter items as you type");
+    eprintln!("  ↑/↓ arrows           Navigate through results");
+    eprintln!("  Enter                Select item (single mode) or confirm selection (multi mode)");
+    eprintln!("  Tab/Space            Toggle selection (multi-select mode only)");
+    eprintln!("  Esc                  Exit without selection");
+    eprintln!("  Ctrl+Q               Exit without selection");
     eprintln!();
     eprintln!("Examples:");
-    eprintln!("  cat file.txt | ff             # Read from stdin, single select");
-    eprintln!("  ff /path/to/file.txt          # Read from file, single select");
-    eprintln!("  ff /path/to/file.txt -m       # Read from file, multi-select");
-    eprintln!("  ff item1 item2 item3          # Direct items, single select");
-    eprintln!("  ff apple banana cherry -m     # Direct items, multi-select");
-    eprintln!("  ff file.txt --height 10       # Non-fullscreen mode, 10 lines high");
+    eprintln!("  ff file.txt                    # Read from file, single select");
+    eprintln!("  ff file.txt -m                 # Read from file, multi-select");
+    eprintln!("  ff ./src/                      # Read directory contents");
+    eprintln!("  ff unix:///tmp/service.sock    # Read from Unix socket");
+    eprintln!("  ff http://api.example.com/data # Read from HTTP endpoint");
+    eprintln!("  ff apple banana cherry         # Direct items, single select");
+    eprintln!("  ff apple banana cherry -m      # Direct items, multi-select");
+    eprintln!("  ff file.txt --height 10        # Non-fullscreen mode, 10 lines high");
     eprintln!("  ff file.txt --height-percentage 50  # Non-fullscreen mode, 50% of terminal");
-    eprintln!("  ff --version                   # Show version information");
+    eprintln!("  ff --version                    # Show version information");
 }
 
 #[cfg(test)]
