@@ -5,7 +5,9 @@ use tokio::net::UnixStream;
 
 /// Read input items from the specified source.
 pub async fn read_input(source: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    if let Some(stripped) = source.strip_prefix("unix://") {
+    if source == "stdin://" {
+        read_from_stdin().await
+    } else if let Some(stripped) = source.strip_prefix("unix://") {
         read_from_unix_socket(stripped).await
     } else if source.starts_with("http://") || source.starts_with("https://") {
         read_from_http_socket(source).await
@@ -57,6 +59,36 @@ pub fn process_file_content(content: &str) -> Result<Vec<String>, String> {
     if items.is_empty() {
         return Err("No items found in file".to_string());
     }
+    Ok(items)
+}
+
+async fn read_from_stdin() -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    // Check if stdin is a pipe or redirected
+    use std::io::{self, BufRead, IsTerminal};
+
+    let stdin = io::stdin();
+
+    // If stdin is a terminal, we can't read from it (TUI will handle input)
+    if stdin.is_terminal() {
+        return Err("Cannot read from terminal stdin in TUI mode".into());
+    }
+
+    // Read all lines from stdin (piped input)
+    let lines = stdin.lock().lines();
+    let mut items = Vec::new();
+
+    for line in lines {
+        let line = line?;
+        let trimmed = line.trim();
+        if !trimmed.is_empty() {
+            items.push(trimmed.to_string());
+        }
+    }
+
+    if items.is_empty() {
+        return Err("No items found in stdin".into());
+    }
+
     Ok(items)
 }
 

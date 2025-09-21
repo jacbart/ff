@@ -9,6 +9,7 @@ use crossterm::{
     },
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
 };
+
 use std::io::{self, Write};
 
 /// Configuration for TUI display mode and height
@@ -24,6 +25,8 @@ pub struct TuiConfig {
     pub show_help_text: bool,
     /// Initial query to set when TUI starts
     pub initial_query: Option<String>,
+    /// Custom prompt to display (default: "> ")
+    pub prompt: Option<String>,
 }
 
 impl Default for TuiConfig {
@@ -34,6 +37,7 @@ impl Default for TuiConfig {
             height_percentage: None,
             show_help_text: true,
             initial_query: None,
+            prompt: None,
         }
     }
 }
@@ -52,6 +56,7 @@ impl TuiConfig {
             height_percentage: None,
             show_help_text: true,
             initial_query: None,
+            prompt: None,
         }
     }
 
@@ -63,6 +68,7 @@ impl TuiConfig {
             height_percentage: Some(percentage),
             show_help_text: true,
             initial_query: None,
+            prompt: None,
         }
     }
 
@@ -74,6 +80,7 @@ impl TuiConfig {
             height_percentage: None,
             show_help_text: true,
             initial_query: None,
+            prompt: None,
         }
     }
 
@@ -85,6 +92,19 @@ impl TuiConfig {
             height_percentage: None,
             show_help_text: true,
             initial_query: Some(query),
+            prompt: None,
+        }
+    }
+
+    /// Create a configuration with custom prompt
+    pub fn with_prompt(prompt: String) -> Self {
+        Self {
+            fullscreen: true,
+            height: None,
+            height_percentage: None,
+            show_help_text: true,
+            initial_query: None,
+            prompt: Some(prompt),
         }
     }
 
@@ -186,8 +206,11 @@ async fn run_async_interactive_tui(
     let mut selected_items = Vec::new();
     let mut needs_redraw = true;
 
+    let mut last_terminal_size = size()?;
+
     loop {
-        let (_term_width, term_height) = size()?;
+        let current_terminal_size = size()?;
+        let (_term_width, term_height) = current_terminal_size;
         let tui_height = config.calculate_height(term_height);
         // Always reserve 1 line for prompt, 1 for result if possible, 1 for instructions
         let available_height = if tui_height > 2 {
@@ -198,8 +221,16 @@ async fn run_async_interactive_tui(
             0 // Only room for prompt
         };
 
-        // Only redraw if needed (when query changes or cursor moves)
-        if needs_redraw {
+        // Redraw if needed (when query changes, cursor moves, or terminal resizes)
+        let terminal_resized = current_terminal_size != last_terminal_size;
+        if needs_redraw || terminal_resized {
+            last_terminal_size = current_terminal_size;
+
+            // Update original cursor position if terminal was resized
+            if terminal_resized {
+                original_cursor = position()?;
+            }
+
             // Draw TUI - always start at the original cursor position
             if fullscreen {
                 execute!(&mut stdout, MoveTo(0, 0), Clear(ClearType::All))?;
@@ -215,10 +246,11 @@ async fn run_async_interactive_tui(
             }
 
             // Draw search prompt
+            let prompt = config.prompt.as_deref().unwrap_or("> ");
             execute!(
                 &mut stdout,
                 SetForegroundColor(Color::Cyan),
-                Print("> "),
+                Print(prompt),
                 ResetColor,
                 Print(&fuzzy_finder.get_query())
             )?;
@@ -292,18 +324,26 @@ async fn run_async_interactive_tui(
         }
 
         // Handle input
-        if event::poll(std::time::Duration::from_millis(100))? {
-            if let Event::Key(key_event) = event::read()? {
-                match handle_async_key_event(&key_event, &mut fuzzy_finder).await {
-                    Action::Continue => {
-                        needs_redraw = true;
-                        continue;
-                    }
-                    Action::Exit => break,
-                    Action::Select(items) => {
-                        selected_items = items;
-                        break;
-                    }
+        let key_event = if let Ok(true) = event::poll(std::time::Duration::from_millis(100)) {
+            if let Ok(Event::Key(key_event)) = event::read() {
+                Some(key_event)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        if let Some(key_event) = key_event {
+            match handle_async_key_event(&key_event, &mut fuzzy_finder).await {
+                Action::Continue => {
+                    needs_redraw = true;
+                    continue;
+                }
+                Action::Exit => break,
+                Action::Select(items) => {
+                    selected_items = items;
+                    break;
                 }
             }
         }
@@ -332,10 +372,10 @@ async fn run_async_interactive_tui(
     // Restore terminal state
     disable_raw_mode()?;
 
-    // Print selected items at the original cursor position
+    // Print selected items below the command line
     if !selected_items.is_empty() {
-        // Move to the original cursor position
-        execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
+        // Move to the line below the original cursor position
+        execute!(&mut stdout, MoveTo(0, original_cursor.1 + 1))?;
 
         // Print each selected item
         for item in &selected_items {

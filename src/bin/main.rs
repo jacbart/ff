@@ -1,12 +1,12 @@
 use std::env;
 use std::fs;
 
-use crate::cli::planner::{plan_cli_action, CliAction};
-use crate::cli::tty::check_tty_requirements;
-use crate::config;
-use crate::get_build_info;
-use crate::input::read_input;
-use crate::tui::{run_async_tui_with_config, run_tui, run_tui_with_config, TuiConfig};
+use ff::cli::planner::{plan_cli_action, CliAction};
+use ff::cli::tty::check_tty_requirements;
+use ff::config;
+use ff::get_build_info;
+use ff::input::read_input;
+use ff::tui::{run_async_tui_with_config, run_tui, run_tui_with_config, TuiConfig};
 
 /// Read items from a file.
 pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
@@ -79,7 +79,9 @@ pub async fn process_items_async(items: Vec<String>) -> Result<Vec<String>, Stri
     // If items is a single special source, use async reading
     let processed_items = if items.len() == 1 {
         let item = &items[0];
-        if item.starts_with("unix://")
+        if item == "stdin://" {
+            read_input(item).await.map_err(|e| e.to_string())?
+        } else if item.starts_with("unix://")
             || item.starts_with("http://")
             || item.starts_with("https://")
         {
@@ -194,7 +196,7 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         CliAction::GenerateShellIntegration { shell_type } => {
-            let script = crate::cli::generate_shell_integration(&shell_type);
+            let script = ff::cli::generate_shell_integration(&shell_type);
             println!("{script}");
             Ok(())
         }
@@ -205,6 +207,7 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
             height_percentage,
             show_help_text,
             initial_query,
+            prompt,
         } => {
             // For async TUI, we need to run it in a tokio runtime
             let rt = tokio::runtime::Runtime::new()?;
@@ -216,6 +219,7 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                     height_percentage,
                     show_help_text,
                     initial_query,
+                    prompt,
                 };
                 let selected =
                     run_async_tui_with_config(processed_items, multi_select, config).await?;
@@ -447,4 +451,8 @@ mod tests {
         let _result = validate_tty_requirements();
         // If we get here, it didn't panic
     }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    cli_main()
 }

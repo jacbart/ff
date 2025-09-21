@@ -80,6 +80,18 @@ pub use tui::run_tui;
 /// - `Err(e)`: An error occurred during TUI operation
 pub use tui::run_tui_with_config;
 
+/// Run an async interactive TUI with custom configuration for height and display mode.
+///
+/// # Arguments
+/// - `items`: The list of items to search through
+/// - `multi_select`: If `true`, allows selecting multiple items
+/// - `config`: TUI configuration specifying height and display mode
+///
+/// # Returns
+/// - `Ok(selected_items)`: The list of selected items (empty if none selected)
+/// - `Err(e)`: An error occurred during TUI operation
+pub use tui::run_async_tui_with_config;
+
 /// Configuration for TUI display mode and height.
 ///
 /// # Example
@@ -150,8 +162,6 @@ fn timestamp_to_date(timestamp: i64) -> String {
 fn is_leap_year(year: i64) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
-
-pub use cli::cli_main;
 
 // === Tests ===
 #[cfg(test)]

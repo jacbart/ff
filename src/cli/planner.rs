@@ -24,6 +24,8 @@ pub enum CliAction {
         show_help_text: bool,
         /// Initial query to set when TUI starts
         initial_query: Option<String>,
+        /// Custom prompt to display
+        prompt: Option<String>,
     },
     /// Error with message
     Error(String),
@@ -42,21 +44,18 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     }
 
     // Check for shell integration flags
-    if let Some(shell_type) = crate::cli::get_shell_type(args) {
+    if let Some(shell_type) = args.iter().find_map(|arg| match arg.as_str() {
+        "--zsh" => Some("zsh"),
+        "--bash" => Some("bash"),
+        "--fish" => Some("fish"),
+        _ => None,
+    }) {
         return CliAction::GenerateShellIntegration {
             shell_type: shell_type.to_string(),
         };
     }
 
-    if args.len() < 2 {
-        return CliAction::Error("Missing required argument: input-source or items".to_string());
-    }
-    let input_source = args[1].clone();
-    if input_source.starts_with('-') && input_source != "-" {
-        return CliAction::Error(format!(
-            "Invalid input source: '{input_source}'. Did you mean to use a flag?"
-        ));
-    }
+    // Parse flags first
     let multi_select = args
         .iter()
         .any(|arg| arg == "--multi-select" || arg == "-m");
@@ -66,6 +65,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     let mut height_percentage: Option<f32> = None;
     let mut show_help_text = false;
     let mut initial_query: Option<String> = None;
+    let mut prompt: Option<String> = None;
 
     for (i, arg) in args.iter().enumerate() {
         if arg == "--height" && i + 1 < args.len() {
@@ -126,6 +126,12 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             }
         } else if arg == "--help-text" {
             show_help_text = true;
+        } else if arg == "--prompt" && i + 1 < args.len() {
+            prompt = Some(args[i + 1].clone());
+        } else if arg.starts_with("--prompt=") {
+            if let Some(value) = arg.strip_prefix("--prompt=") {
+                prompt = Some(value.to_string());
+            }
         }
     }
 
@@ -142,7 +148,74 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
         if arg == "--query" && i + 1 >= args.len() {
             return CliAction::Error("Missing query value after --query".to_string());
         }
+        if arg == "--prompt" && i + 1 >= args.len() {
+            return CliAction::Error("Missing prompt value after --prompt".to_string());
+        }
     }
+
+    // Check if we have arguments
+    if args.len() < 2 {
+        // No arguments provided - show error
+        return CliAction::Error(
+            "No input provided. Use --help for usage information.".to_string(),
+        );
+    }
+
+    // Find the first non-flag argument as the input source
+    let mut input_source = None;
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg.starts_with('-') && *arg != "-" {
+            // Skip flags and their values
+            if *arg == "--height"
+                || *arg == "--height-percentage"
+                || *arg == "--query"
+                || *arg == "--prompt"
+            {
+                i += 2; // Skip flag and its value
+            } else if arg.starts_with("--height=")
+                || arg.starts_with("--height-percentage=")
+                || arg.starts_with("--query=")
+                || arg.starts_with("--prompt=")
+            {
+                i += 1; // Skip flag with embedded value
+            } else if *arg == "--multi-select"
+                || *arg == "-m"
+                || *arg == "--help-text"
+                || *arg == "--zsh"
+                || *arg == "--bash"
+                || *arg == "--fish"
+            {
+                i += 1; // Skip flag without value
+            } else {
+                // Unknown flag
+                return CliAction::Error(format!(
+                    "Unknown flag: '{arg}'. Use --help for usage information."
+                ));
+            }
+        } else {
+            // Found a non-flag argument, this is our input source
+            input_source = Some(arg.clone());
+            break;
+        }
+    }
+
+    let input_source = match input_source {
+        Some(src) => src,
+        None => {
+            // No input source found, treat as stdin
+            return CliAction::RunAsyncTui {
+                items: vec!["stdin://".to_string()],
+                multi_select,
+                height,
+                height_percentage,
+                show_help_text,
+                initial_query,
+                prompt,
+            };
+        }
+    };
 
     // Check for special input sources
     if input_source.starts_with("unix://")
@@ -156,6 +229,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             height_percentage,
             show_help_text,
             initial_query,
+            prompt,
         };
     }
 
@@ -170,6 +244,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                 height_percentage,
                 show_help_text,
                 initial_query,
+                prompt,
             };
         } else {
             return CliAction::RunAsyncTui {
@@ -179,48 +254,42 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                 height_percentage,
                 show_help_text,
                 initial_query,
+                prompt,
             };
         }
     }
 
-    // Direct items
+    // Direct items - collect all non-flag arguments after the input source
     let mut direct_items: Vec<String> = Vec::new();
-    let mut skip_next = false;
-
-    for arg in args[1..].iter() {
-        if skip_next {
-            skip_next = false;
-            continue;
+    let mut i = 1;
+    while i < args.len() {
+        let arg = &args[i];
+        if arg.starts_with('-') && *arg != "-" {
+            // Skip flags and their values
+            if *arg == "--height"
+                || *arg == "--height-percentage"
+                || *arg == "--query"
+                || *arg == "--prompt"
+            {
+                i += 2; // Skip flag and its value
+            } else if arg.starts_with("--height=")
+                || arg.starts_with("--height-percentage=")
+                || arg.starts_with("--query=")
+                || arg.starts_with("--prompt=")
+            {
+                i += 1; // Skip flag with embedded value
+            } else if *arg == "--multi-select" || *arg == "-m" || *arg == "--help-text" {
+                i += 1; // Skip flag without value
+            } else {
+                i += 1; // Skip unknown flag
+            }
+        } else {
+            // Found a non-flag argument
+            direct_items.push(arg.clone());
+            i += 1;
         }
-
-        if *arg == "--multi-select" || *arg == "-m" {
-            continue;
-        }
-
-        if *arg == "--async" || *arg == "-a" {
-            continue;
-        }
-
-        if *arg == "--height" || *arg == "--height-percentage" {
-            skip_next = true;
-            continue;
-        }
-
-        if arg.starts_with("--height=") || arg.starts_with("--height-percentage=") {
-            continue;
-        }
-
-        if *arg == "--query" {
-            skip_next = true;
-            continue;
-        }
-
-        if *arg == "--help-text" {
-            continue;
-        }
-
-        direct_items.push(arg.clone());
     }
+
     if direct_items.is_empty() {
         return CliAction::Error("No items provided".to_string());
     }
@@ -232,6 +301,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
         height_percentage,
         show_help_text,
         initial_query,
+        prompt,
     }
 }
 

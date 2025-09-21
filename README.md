@@ -23,6 +23,26 @@ nix build
 ./result/bin/ff --version
 ```
 
+### Shell Integration
+
+To enable piped input support, source the shell integration script:
+
+```bash
+# For Zsh
+source <(ff-bin --zsh)
+
+# For Bash
+source <(ff-bin --bash)
+
+# For Fish
+source <(ff-bin --fish)
+```
+
+After sourcing, you can use the `ff` function for piped input:
+```bash
+echo "item1\nitem2\nitem3" | ff -m --height 10
+```
+
 ## Usage
 
 ### Basic Examples
@@ -40,6 +60,13 @@ ff apple banana cherry
 # Height options (non-fullscreen)
 ff items.txt --height 10
 ff items.txt --height-percentage 50
+
+# Custom prompt
+ff items.txt --prompt "Search: "
+
+# Piped input (requires shell integration)
+echo "apple\nbanana\ncherry" | ff -m --height 10
+cat file.txt | ff --prompt "Select: "
 ```
 
 ### Library Usage
