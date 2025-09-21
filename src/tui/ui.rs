@@ -1,11 +1,13 @@
 use crate::fuzzy::FuzzyFinder;
 use crate::tui::controls::Action;
 use crossterm::{
-    cursor::{Hide, Show, MoveTo, position},
+    cursor::{position, Hide, MoveTo, Show},
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
-    style::{Color, Print, ResetColor, SetForegroundColor, SetBackgroundColor, SetAttribute, Attribute},
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, size},
+    style::{
+        Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
+    },
+    terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
 };
 use std::io::{self, Write};
 
@@ -138,7 +140,11 @@ async fn run_async_interactive_tui(
     let tui_height = config.calculate_height(term_height);
 
     if fullscreen {
-        execute!(&mut stdout, crossterm::terminal::EnterAlternateScreen, Clear(ClearType::All))?;
+        execute!(
+            &mut stdout,
+            crossterm::terminal::EnterAlternateScreen,
+            Clear(ClearType::All)
+        )?;
     } else {
         // If not enough space below, scroll the terminal down
         if original_cursor.1 + tui_height > term_height {
@@ -176,7 +182,11 @@ async fn run_async_interactive_tui(
                 execute!(&mut stdout, MoveTo(0, 0), Clear(ClearType::All))?;
             } else {
                 for i in 0..tui_height.max(2) {
-                    execute!(&mut stdout, MoveTo(0, original_cursor.1 + i), Clear(ClearType::CurrentLine))?;
+                    execute!(
+                        &mut stdout,
+                        MoveTo(0, original_cursor.1 + i),
+                        Clear(ClearType::CurrentLine)
+                    )?;
                 }
                 execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
             }
@@ -194,7 +204,7 @@ async fn run_async_interactive_tui(
             if tui_height >= 2 && available_height > 0 {
                 let filtered_items = fuzzy_finder.get_filtered_items();
                 let visible_items = filtered_items.iter().take(available_height as usize);
-                
+
                 for (i, item) in visible_items.enumerate() {
                     let y_pos = if fullscreen {
                         (i + 1) as u16
@@ -202,10 +212,10 @@ async fn run_async_interactive_tui(
                         original_cursor.1 + 1 + i as u16
                     };
                     execute!(&mut stdout, MoveTo(0, y_pos))?;
-                    
+
                     let is_cursor = i == fuzzy_finder.get_cursor_position();
                     let is_selected = fuzzy_finder.selected_indices.contains(&i);
-                    
+
                     draw_highlighted_item_with_matches(
                         &mut stdout,
                         item,
@@ -218,11 +228,7 @@ async fn run_async_interactive_tui(
             }
 
             if tui_height < 2 {
-                let warning_y = if fullscreen {
-                    1
-                } else {
-                    original_cursor.1 + 1
-                };
+                let warning_y = if fullscreen { 1 } else { original_cursor.1 + 1 };
                 execute!(
                     &mut stdout,
                     MoveTo(0, warning_y),
@@ -245,9 +251,15 @@ async fn run_async_interactive_tui(
                     SetForegroundColor(Color::DarkGrey)
                 )?;
                 if multi_select {
-                    execute!(&mut stdout, Print("Tab/Space: Toggle | Enter: Confirm | Esc: Exit"))?;
+                    execute!(
+                        &mut stdout,
+                        Print("Tab/Space: Toggle | Enter: Confirm | Esc: Exit")
+                    )?;
                 } else {
-                    execute!(&mut stdout, Print("↑/↓: Navigate | Enter: Select | Esc: Exit"))?;
+                    execute!(
+                        &mut stdout,
+                        Print("↑/↓: Navigate | Enter: Select | Esc: Exit")
+                    )?;
                 }
                 execute!(&mut stdout, ResetColor)?;
             }
@@ -280,9 +292,17 @@ async fn run_async_interactive_tui(
         execute!(&mut stdout, Show)?;
     } else {
         for i in 0..config.calculate_height(size()?.1) {
-            execute!(&mut stdout, MoveTo(0, original_cursor.1 + i), Clear(ClearType::CurrentLine))?;
+            execute!(
+                &mut stdout,
+                MoveTo(0, original_cursor.1 + i),
+                Clear(ClearType::CurrentLine)
+            )?;
         }
-        execute!(&mut stdout, MoveTo(original_cursor.0, original_cursor.1), Show)?;
+        execute!(
+            &mut stdout,
+            MoveTo(original_cursor.0, original_cursor.1),
+            Show
+        )?;
         stdout.flush()?;
     }
 
@@ -293,7 +313,7 @@ async fn run_async_interactive_tui(
     if !selected_items.is_empty() {
         // Move to the original cursor position
         execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
-        
+
         // Print each selected item
         for item in &selected_items {
             println!("{item}");
@@ -346,13 +366,19 @@ async fn handle_async_key_event(
             let selected = fuzzy_finder.get_selected_items();
             if !selected.is_empty() {
                 Action::Select(selected)
-            } else if !fuzzy_finder.is_multi_select() && !fuzzy_finder.get_filtered_items().is_empty() {
+            } else if !fuzzy_finder.is_multi_select()
+                && !fuzzy_finder.get_filtered_items().is_empty()
+            {
                 // In single select mode, select the current item if no items are selected
-                let current_item = &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
+                let current_item =
+                    &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
                 Action::Select(vec![current_item.clone()])
-            } else if fuzzy_finder.is_multi_select() && !fuzzy_finder.get_filtered_items().is_empty() {
+            } else if fuzzy_finder.is_multi_select()
+                && !fuzzy_finder.get_filtered_items().is_empty()
+            {
                 // In multi-select mode, if no items are selected, select the current item
-                let current_item = &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
+                let current_item =
+                    &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
                 Action::Select(vec![current_item.clone()])
             } else {
                 Action::Continue
@@ -374,7 +400,12 @@ fn draw_highlighted_item_with_matches<W: Write>(
     // Set cursor highlighting with Gruvbox soft colors
     if is_cursor {
         // Gruvbox soft highlight: dark grey background, yellow foreground, bold
-        execute!(stdout, SetBackgroundColor(Color::DarkGrey), SetForegroundColor(Color::Yellow), SetAttribute(Attribute::Bold))?;
+        execute!(
+            stdout,
+            SetBackgroundColor(Color::DarkGrey),
+            SetForegroundColor(Color::Yellow),
+            SetAttribute(Attribute::Bold)
+        )?;
     }
 
     // Set selection highlighting (only show checkmarks for selected items)
@@ -391,17 +422,34 @@ fn draw_highlighted_item_with_matches<W: Write>(
                 // Highlight matched characters with Gruvbox soft colors
                 if is_cursor {
                     // For selected rows, use bright white that contrasts with dark grey background
-                    execute!(stdout, SetForegroundColor(Color::White), SetAttribute(Attribute::Bold), SetAttribute(Attribute::Underlined))?;
+                    execute!(
+                        stdout,
+                        SetForegroundColor(Color::White),
+                        SetAttribute(Attribute::Bold),
+                        SetAttribute(Attribute::Underlined)
+                    )?;
                 } else {
                     // For non-selected rows, use bold and underline
-                    execute!(stdout, SetAttribute(Attribute::Bold), SetAttribute(Attribute::Underlined))?;
+                    execute!(
+                        stdout,
+                        SetAttribute(Attribute::Bold),
+                        SetAttribute(Attribute::Underlined)
+                    )?;
                 }
                 execute!(stdout, Print(ch))?;
                 // Reset attributes after each character to prevent bleeding
                 if is_cursor {
-                    execute!(stdout, SetForegroundColor(Color::Yellow), SetAttribute(Attribute::NoUnderline))?;
+                    execute!(
+                        stdout,
+                        SetForegroundColor(Color::Yellow),
+                        SetAttribute(Attribute::NoUnderline)
+                    )?;
                 } else {
-                    execute!(stdout, SetAttribute(Attribute::NoUnderline), SetAttribute(Attribute::NormalIntensity))?;
+                    execute!(
+                        stdout,
+                        SetAttribute(Attribute::NoUnderline),
+                        SetAttribute(Attribute::NormalIntensity)
+                    )?;
                 }
             } else {
                 execute!(stdout, Print(ch))?;
@@ -415,8 +463,6 @@ fn draw_highlighted_item_with_matches<W: Write>(
     execute!(stdout, ResetColor)?;
     Ok(())
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -530,14 +576,14 @@ mod tests {
     fn test_cursor_highlighting_logic() {
         // Test that cursor highlighting works correctly
         let mut output = Vec::new();
-        
+
         // Test cursor position
         draw_highlighted_item_with_matches(&mut output, "test", true, false, None).unwrap();
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("\x1b[48;5;8m")); // Dark grey background
         assert!(output_str.contains("\x1b[38;5;11m")); // Yellow foreground
         assert!(output_str.contains("\x1b[1m")); // Bold
-        
+
         // Test non-cursor position
         let mut output2 = Vec::new();
         draw_highlighted_item_with_matches(&mut output2, "test", false, false, None).unwrap();
@@ -552,7 +598,7 @@ mod tests {
         let mut output = Vec::new();
         draw_highlighted_item_with_matches(&mut output, "test", true, false, None).unwrap();
         let output_str = String::from_utf8(output).unwrap();
-        
+
         // Check that color codes are present
         assert!(output_str.contains("\x1b["));
     }
