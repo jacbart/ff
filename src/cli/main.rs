@@ -5,8 +5,9 @@ use crate::cli::planner::{plan_cli_action, CliAction};
 use crate::cli::tty::check_tty_requirements;
 use crate::config;
 use crate::get_build_info;
-use crate::tui::{run_async_tui_with_config, run_tui, run_tui_with_config, TuiConfig};
 use crate::input::read_input;
+use crate::tui::ui::{run_tui, run_tui_with_config};
+use crate::tui::TuiConfig;
 
 /// Read items from a file.
 pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
@@ -79,7 +80,10 @@ pub async fn process_items_async(items: Vec<String>) -> Result<Vec<String>, Stri
     // If items is a single special source, use async reading
     let processed_items = if items.len() == 1 {
         let item = &items[0];
-        if item.starts_with("unix://") || item.starts_with("http://") || item.starts_with("https://") {
+        if item.starts_with("unix://")
+            || item.starts_with("http://")
+            || item.starts_with("https://")
+        {
             read_input(item).await.map_err(|e| e.to_string())?
         } else if let Some(dir_path) = item.strip_prefix("dir:") {
             // Directory path
@@ -172,7 +176,7 @@ pub async fn run_async_tui_with_height_validation(
         TuiConfig::fullscreen()
     };
 
-    match run_async_tui_with_config(processed_items, multi_select, config).await {
+    match run_tui_with_config(processed_items, multi_select, config).await {
         Ok(selected) => Ok(handle_tui_results(selected)),
         Err(err) => Err(format!("Async TUI error: {err}")),
     }
@@ -207,8 +211,7 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                     height_percentage,
                     show_help_text,
                 };
-                let selected =
-                    run_async_tui_with_config(processed_items, multi_select, config).await?;
+                let selected = run_tui_with_config(processed_items, multi_select, config).await?;
                 Ok::<Vec<String>, Box<dyn std::error::Error>>(selected)
             })?;
 

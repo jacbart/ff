@@ -9,6 +9,7 @@ use crossterm::{
     },
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
 };
+use futures::stream::{Stream, StreamExt};
 use std::io::{self, Write};
 
 /// Configuration for TUI display mode and height
@@ -86,48 +87,37 @@ impl TuiConfig {
     }
 }
 
-/// Run an interactive TUI for fuzzy finding through a list of items.
-pub fn run_tui(
-    items: Vec<String>,
+/// Run an async interactive TUI for fuzzy finding through a stream of items.
+pub async fn run_tui<S: Stream<Item = String> + Send + 'static>(
+    items_stream: S,
     multi_select: bool,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    run_tui_with_config(items, multi_select, TuiConfig::default())
-}
-
-/// Run an interactive TUI with custom configuration for height and display mode.
-pub fn run_tui_with_config(
-    items: Vec<String>,
-    multi_select: bool,
-    config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(run_async_tui_with_config(items, multi_select, config))
-}
-
-/// Run an async interactive TUI for fuzzy finding through a list of items.
-pub async fn run_async_tui(
-    items: Vec<String>,
-    multi_select: bool,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    run_async_tui_with_config(items, multi_select, TuiConfig::default()).await
+    run_tui_with_config(items_stream, multi_select, TuiConfig::default()).await
 }
 
 /// Run an async interactive TUI with custom configuration for height and display mode.
-pub async fn run_async_tui_with_config(
-    items: Vec<String>,
+pub async fn run_tui_with_config<S>(
+    items_stream: S,
     multi_select: bool,
     config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    run_async_interactive_tui(items, multi_select, config).await
+) -> Result<Vec<String>, Box<dyn std::error::Error>>
+where
+    S: Stream<Item = String> + Send + 'static,
+{
+    run_interactive_tui(items_stream, multi_select, config).await
 }
 
 /// Run the async interactive TUI
-async fn run_async_interactive_tui(
-    items: Vec<String>,
+async fn run_interactive_tui<S>(
+    items_stream: S,
     multi_select: bool,
     config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let mut fuzzy_finder = FuzzyFinder::with_items_async(items, multi_select).await;
+) -> Result<Vec<String>, Box<dyn std::error::Error>>
+where
+    S: Stream<Item = String> + Send + 'static,
+{
+    let mut items_stream = Box::pin(items_stream);
+    let mut fuzzy_finder = FuzzyFinder::new(multi_select);
     let mut stdout = io::stdout();
 
     // Enable raw mode and hide cursor
@@ -162,8 +152,36 @@ async fn run_async_interactive_tui(
 
     let mut selected_items = Vec::new();
     let mut needs_redraw = true;
+    let mut items_buffer = Vec::new();
+    let mut stream_exhausted = false;
 
     loop {
+        // Process new items from stream
+        if !stream_exhausted {
+            match items_stream.next().await {
+                Some(item) => {
+                    items_buffer.push(item);
+                    // Add items in batches to avoid too frequent updates
+                    if items_buffer.len() >= 10 {
+                        fuzzy_finder
+                            .add_items(items_buffer.drain(..).collect())
+                            .await;
+                        needs_redraw = true;
+                    }
+                }
+                None => {
+                    stream_exhausted = true;
+                    // Add any remaining buffered items
+                    if !items_buffer.is_empty() {
+                        fuzzy_finder
+                            .add_items(items_buffer.drain(..).collect())
+                            .await;
+                        needs_redraw = true;
+                    }
+                }
+            }
+        }
+
         let (_term_width, term_height) = size()?;
         let tui_height = config.calculate_height(term_height);
         // Always reserve 1 line for prompt, 1 for result if possible, 1 for instructions
@@ -268,8 +286,8 @@ async fn run_async_interactive_tui(
             needs_redraw = false;
         }
 
-        // Handle input
-        if event::poll(std::time::Duration::from_millis(100))? {
+        // Handle input with timeout to allow stream processing
+        if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key_event) = event::read()? {
                 match handle_async_key_event(&key_event, &mut fuzzy_finder).await {
                     Action::Continue => {
@@ -321,6 +339,20 @@ async fn run_async_interactive_tui(
     }
 
     Ok(selected_items)
+}
+
+/// Create a stream that yields items at regular intervals (useful for testing)
+pub fn create_interval_stream(items: Vec<String>, interval_ms: u64) -> impl Stream<Item = String> {
+    use tokio::time::{sleep, Duration};
+
+    futures::stream::unfold((items, 0), move |(items, index)| async move {
+        if index < items.len() {
+            sleep(Duration::from_millis(interval_ms)).await;
+            Some((items[index].clone(), (items, index + 1)))
+        } else {
+            None
+        }
+    })
 }
 
 /// Handle key events in async mode
@@ -601,5 +633,13 @@ mod tests {
 
         // Check that color codes are present
         assert!(output_str.contains("\x1b["));
+    }
+
+    #[tokio::test]
+    async fn test_create_interval_stream() {
+        let items = vec!["item1".to_string(), "item2".to_string()];
+        let stream = create_interval_stream(items, 10); // 10ms interval
+        let collected: Vec<String> = stream.collect().await;
+        assert_eq!(collected, vec!["item1".to_string(), "item2".to_string()]);
     }
 }
