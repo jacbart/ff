@@ -66,7 +66,6 @@ pub async fn send_input_to_channel(
     source: &str,
     sender: mpsc::Sender<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // clean source
     if let Some(stripped) = source.strip_prefix("unix://") {
         send_from_unix_socket(stripped, sender).await
     } else if source.starts_with("http://") || source.starts_with("https://") {
