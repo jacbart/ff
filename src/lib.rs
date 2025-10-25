@@ -53,14 +53,15 @@ pub mod tui;
 /// ```
 pub use fuzzy::FuzzyFinder;
 
-/// Run an interactive TUI for fuzzy finding through a list of items.
+/// Run an interactive TUI for fuzzy finding through an mpsc receiver of items.
 ///
 /// - Real-time fuzzy filtering as you type
 /// - Keyboard navigation (arrow keys)
 /// - Single-select or multi-select modes
+/// - Asynchronous item processing via mpsc channel
 ///
 /// # Arguments
-/// - `items`: The list of items to search through
+/// - `items_receiver`: The mpsc receiver for items to search through
 /// - `multi_select`: If `true`, allows selecting multiple items
 ///
 /// # Returns
@@ -71,7 +72,7 @@ pub use tui::run_tui;
 /// Run an interactive TUI with custom configuration for height and display mode.
 ///
 /// # Arguments
-/// - `items`: The list of items to search through
+/// - `items_receiver`: The mpsc receiver for items to search through
 /// - `multi_select`: If `true`, allows selecting multiple items
 /// - `config`: TUI configuration specifying height and display mode
 ///
@@ -79,6 +80,12 @@ pub use tui::run_tui;
 /// - `Ok(selected_items)`: The list of selected items (empty if none selected)
 /// - `Err(e)`: An error occurred during TUI operation
 pub use tui::run_tui_with_config;
+
+/// Create an mpsc channel for sending items to the TUI.
+///
+/// # Returns
+/// - `(sender, receiver)`: A tuple containing the sender and receiver for the channel
+pub use tui::create_items_channel;
 
 /// Configuration for TUI display mode and height.
 ///

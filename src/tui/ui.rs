@@ -1,13 +1,19 @@
 use crate::fuzzy::FuzzyFinder;
 use crate::tui::controls::Action;
 use crossterm::{
-    cursor::{Hide, Show, MoveTo, position},
+    cursor::{position, Hide, MoveTo, Show},
     event::{self, Event, KeyCode, KeyModifiers},
     execute,
-    style::{Color, Print, ResetColor, SetForegroundColor, SetBackgroundColor, SetAttribute, Attribute},
-    terminal::{disable_raw_mode, enable_raw_mode, Clear, ClearType, size},
+    style::{
+        Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
+    },
+    terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
 };
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    mem,
+};
+use tokio::sync::mpsc;
 
 /// Configuration for TUI display mode and height
 #[derive(Debug, Clone)]
@@ -84,48 +90,30 @@ impl TuiConfig {
     }
 }
 
-/// Run an interactive TUI for fuzzy finding through a list of items.
-pub fn run_tui(
-    items: Vec<String>,
+/// Run an async interactive TUI for fuzzy finding through an mpsc receiver of items.
+pub async fn run_tui(
+    items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    run_tui_with_config(items, multi_select, TuiConfig::default())
-}
-
-/// Run an interactive TUI with custom configuration for height and display mode.
-pub fn run_tui_with_config(
-    items: Vec<String>,
-    multi_select: bool,
-    config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let rt = tokio::runtime::Runtime::new()?;
-    rt.block_on(run_async_tui_with_config(items, multi_select, config))
-}
-
-/// Run an async interactive TUI for fuzzy finding through a list of items.
-pub async fn run_async_tui(
-    items: Vec<String>,
-    multi_select: bool,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    run_async_tui_with_config(items, multi_select, TuiConfig::default()).await
+    run_tui_with_config(items_receiver, multi_select, TuiConfig::default()).await
 }
 
 /// Run an async interactive TUI with custom configuration for height and display mode.
-pub async fn run_async_tui_with_config(
-    items: Vec<String>,
+pub async fn run_tui_with_config(
+    items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
     config: TuiConfig,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    run_async_interactive_tui(items, multi_select, config).await
+    run_interactive_tui(items_receiver, multi_select, config).await
 }
 
 /// Run the async interactive TUI
-async fn run_async_interactive_tui(
-    items: Vec<String>,
+async fn run_interactive_tui(
+    mut items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
     config: TuiConfig,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    let mut fuzzy_finder = FuzzyFinder::with_items_async(items, multi_select).await;
+    let mut fuzzy_finder = FuzzyFinder::new(multi_select);
     let mut stdout = io::stdout();
 
     // Enable raw mode and hide cursor
@@ -138,7 +126,11 @@ async fn run_async_interactive_tui(
     let tui_height = config.calculate_height(term_height);
 
     if fullscreen {
-        execute!(&mut stdout, crossterm::terminal::EnterAlternateScreen, Clear(ClearType::All))?;
+        execute!(
+            &mut stdout,
+            crossterm::terminal::EnterAlternateScreen,
+            Clear(ClearType::All)
+        )?;
     } else {
         // If not enough space below, scroll the terminal down
         if original_cursor.1 + tui_height > term_height {
@@ -156,13 +148,41 @@ async fn run_async_interactive_tui(
 
     let mut selected_items = Vec::new();
     let mut needs_redraw = true;
+    let mut items_buffer = Vec::new();
+    let mut receiver_exhausted = false;
 
     loop {
+        // Process new items from mpsc receiver
+        if !receiver_exhausted {
+            match items_receiver.try_recv() {
+                Ok(item) => {
+                    items_buffer.push(item);
+                    fuzzy_finder.add_items(mem::take(&mut items_buffer)).await;
+                    needs_redraw = true;
+                }
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    // No items available right now, continue with other processing
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    receiver_exhausted = true;
+                    // Add any remaining buffered items
+                    if !items_buffer.is_empty() {
+                        fuzzy_finder.add_items(mem::take(&mut items_buffer)).await;
+                        needs_redraw = true;
+                    }
+                }
+            }
+        }
+
         let (_term_width, term_height) = size()?;
         let tui_height = config.calculate_height(term_height);
         // Always reserve 1 line for prompt, 1 for result if possible, 1 for instructions
         let available_height = if tui_height > 2 {
-            tui_height - 2 // 1 for prompt, 1 for instructions
+            if config.show_help_text {
+                tui_height - 2 // 1 for prompt, 1 for instructions
+            } else {
+                tui_height - 1
+            }
         } else if tui_height == 2 {
             1 // Only room for prompt and one result
         } else {
@@ -176,14 +196,20 @@ async fn run_async_interactive_tui(
                 execute!(&mut stdout, MoveTo(0, 0), Clear(ClearType::All))?;
             } else {
                 for i in 0..tui_height.max(2) {
-                    execute!(&mut stdout, MoveTo(0, original_cursor.1 + i), Clear(ClearType::CurrentLine))?;
+                    execute!(
+                        &mut stdout,
+                        MoveTo(0, original_cursor.1 + i),
+                        Clear(ClearType::CurrentLine)
+                    )?;
                 }
                 execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
             }
 
             // Draw search prompt
+            let prompt_y = if fullscreen { 0 } else { original_cursor.1 };
             execute!(
                 &mut stdout,
+                MoveTo(0, prompt_y),
                 SetForegroundColor(Color::Cyan),
                 Print("> "),
                 ResetColor,
@@ -194,7 +220,7 @@ async fn run_async_interactive_tui(
             if tui_height >= 2 && available_height > 0 {
                 let filtered_items = fuzzy_finder.get_filtered_items();
                 let visible_items = filtered_items.iter().take(available_height as usize);
-                
+
                 for (i, item) in visible_items.enumerate() {
                     let y_pos = if fullscreen {
                         (i + 1) as u16
@@ -202,10 +228,10 @@ async fn run_async_interactive_tui(
                         original_cursor.1 + 1 + i as u16
                     };
                     execute!(&mut stdout, MoveTo(0, y_pos))?;
-                    
+
                     let is_cursor = i == fuzzy_finder.get_cursor_position();
                     let is_selected = fuzzy_finder.selected_indices.contains(&i);
-                    
+
                     draw_highlighted_item_with_matches(
                         &mut stdout,
                         item,
@@ -218,11 +244,7 @@ async fn run_async_interactive_tui(
             }
 
             if tui_height < 2 {
-                let warning_y = if fullscreen {
-                    1
-                } else {
-                    original_cursor.1 + 1
-                };
+                let warning_y = if fullscreen { 1 } else { original_cursor.1 + 1 };
                 execute!(
                     &mut stdout,
                     MoveTo(0, warning_y),
@@ -245,9 +267,15 @@ async fn run_async_interactive_tui(
                     SetForegroundColor(Color::DarkGrey)
                 )?;
                 if multi_select {
-                    execute!(&mut stdout, Print("Tab/Space: Toggle | Enter: Confirm | Esc: Exit"))?;
+                    execute!(
+                        &mut stdout,
+                        Print("Tab/Space: Toggle | Enter: Confirm | Esc/Ctrl+C/Ctrl+Q: Exit")
+                    )?;
                 } else {
-                    execute!(&mut stdout, Print("↑/↓: Navigate | Enter: Select | Esc: Exit"))?;
+                    execute!(
+                        &mut stdout,
+                        Print("↑/↓: Navigate | Enter: Select | Esc/Ctrl+C/Ctrl+Q: Exit")
+                    )?;
                 }
                 execute!(&mut stdout, ResetColor)?;
             }
@@ -256,8 +284,8 @@ async fn run_async_interactive_tui(
             needs_redraw = false;
         }
 
-        // Handle input
-        if event::poll(std::time::Duration::from_millis(100))? {
+        // Handle input with timeout to allow stream processing
+        if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key_event) = event::read()? {
                 match handle_async_key_event(&key_event, &mut fuzzy_finder).await {
                     Action::Continue => {
@@ -280,9 +308,17 @@ async fn run_async_interactive_tui(
         execute!(&mut stdout, Show)?;
     } else {
         for i in 0..config.calculate_height(size()?.1) {
-            execute!(&mut stdout, MoveTo(0, original_cursor.1 + i), Clear(ClearType::CurrentLine))?;
+            execute!(
+                &mut stdout,
+                MoveTo(0, original_cursor.1 + i),
+                Clear(ClearType::CurrentLine)
+            )?;
         }
-        execute!(&mut stdout, MoveTo(original_cursor.0, original_cursor.1), Show)?;
+        execute!(
+            &mut stdout,
+            MoveTo(original_cursor.0, original_cursor.1),
+            Show
+        )?;
         stdout.flush()?;
     }
 
@@ -293,7 +329,7 @@ async fn run_async_interactive_tui(
     if !selected_items.is_empty() {
         // Move to the original cursor position
         execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
-        
+
         // Print each selected item
         for item in &selected_items {
             println!("{item}");
@@ -303,6 +339,11 @@ async fn run_async_interactive_tui(
     Ok(selected_items)
 }
 
+/// Create an mpsc channel for sending items to the TUI
+pub fn create_items_channel() -> (mpsc::Sender<String>, mpsc::Receiver<String>) {
+    mpsc::channel(1000) // Buffer size of 1000 items
+}
+
 /// Handle key events in async mode
 async fn handle_async_key_event(
     key_event: &crossterm::event::KeyEvent,
@@ -310,7 +351,7 @@ async fn handle_async_key_event(
 ) -> crate::tui::controls::Action {
     match key_event.code {
         KeyCode::Char(c) => {
-            if c == 'q' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
+            if (c == 'q' || c == 'c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
                 Action::Exit
             } else if c == ' ' && fuzzy_finder.is_multi_select() {
                 fuzzy_finder.toggle_selection();
@@ -346,13 +387,19 @@ async fn handle_async_key_event(
             let selected = fuzzy_finder.get_selected_items();
             if !selected.is_empty() {
                 Action::Select(selected)
-            } else if !fuzzy_finder.is_multi_select() && !fuzzy_finder.get_filtered_items().is_empty() {
+            } else if !fuzzy_finder.is_multi_select()
+                && !fuzzy_finder.get_filtered_items().is_empty()
+            {
                 // In single select mode, select the current item if no items are selected
-                let current_item = &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
+                let current_item =
+                    &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
                 Action::Select(vec![current_item.clone()])
-            } else if fuzzy_finder.is_multi_select() && !fuzzy_finder.get_filtered_items().is_empty() {
+            } else if fuzzy_finder.is_multi_select()
+                && !fuzzy_finder.get_filtered_items().is_empty()
+            {
                 // In multi-select mode, if no items are selected, select the current item
-                let current_item = &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
+                let current_item =
+                    &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
                 Action::Select(vec![current_item.clone()])
             } else {
                 Action::Continue
@@ -374,7 +421,12 @@ fn draw_highlighted_item_with_matches<W: Write>(
     // Set cursor highlighting with Gruvbox soft colors
     if is_cursor {
         // Gruvbox soft highlight: dark grey background, yellow foreground, bold
-        execute!(stdout, SetBackgroundColor(Color::DarkGrey), SetForegroundColor(Color::Yellow), SetAttribute(Attribute::Bold))?;
+        execute!(
+            stdout,
+            SetBackgroundColor(Color::DarkGrey),
+            SetForegroundColor(Color::Yellow),
+            SetAttribute(Attribute::Bold)
+        )?;
     }
 
     // Set selection highlighting (only show checkmarks for selected items)
@@ -391,17 +443,34 @@ fn draw_highlighted_item_with_matches<W: Write>(
                 // Highlight matched characters with Gruvbox soft colors
                 if is_cursor {
                     // For selected rows, use bright white that contrasts with dark grey background
-                    execute!(stdout, SetForegroundColor(Color::White), SetAttribute(Attribute::Bold), SetAttribute(Attribute::Underlined))?;
+                    execute!(
+                        stdout,
+                        SetForegroundColor(Color::White),
+                        SetAttribute(Attribute::Bold),
+                        SetAttribute(Attribute::Underlined)
+                    )?;
                 } else {
                     // For non-selected rows, use bold and underline
-                    execute!(stdout, SetAttribute(Attribute::Bold), SetAttribute(Attribute::Underlined))?;
+                    execute!(
+                        stdout,
+                        SetAttribute(Attribute::Bold),
+                        SetAttribute(Attribute::Underlined)
+                    )?;
                 }
                 execute!(stdout, Print(ch))?;
                 // Reset attributes after each character to prevent bleeding
                 if is_cursor {
-                    execute!(stdout, SetForegroundColor(Color::Yellow), SetAttribute(Attribute::NoUnderline))?;
+                    execute!(
+                        stdout,
+                        SetForegroundColor(Color::Yellow),
+                        SetAttribute(Attribute::NoUnderline)
+                    )?;
                 } else {
-                    execute!(stdout, SetAttribute(Attribute::NoUnderline), SetAttribute(Attribute::NormalIntensity))?;
+                    execute!(
+                        stdout,
+                        SetAttribute(Attribute::NoUnderline),
+                        SetAttribute(Attribute::NormalIntensity)
+                    )?;
                 }
             } else {
                 execute!(stdout, Print(ch))?;
@@ -415,8 +484,6 @@ fn draw_highlighted_item_with_matches<W: Write>(
     execute!(stdout, ResetColor)?;
     Ok(())
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -530,14 +597,14 @@ mod tests {
     fn test_cursor_highlighting_logic() {
         // Test that cursor highlighting works correctly
         let mut output = Vec::new();
-        
+
         // Test cursor position
         draw_highlighted_item_with_matches(&mut output, "test", true, false, None).unwrap();
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("\x1b[48;5;8m")); // Dark grey background
         assert!(output_str.contains("\x1b[38;5;11m")); // Yellow foreground
         assert!(output_str.contains("\x1b[1m")); // Bold
-        
+
         // Test non-cursor position
         let mut output2 = Vec::new();
         draw_highlighted_item_with_matches(&mut output2, "test", false, false, None).unwrap();
@@ -552,8 +619,40 @@ mod tests {
         let mut output = Vec::new();
         draw_highlighted_item_with_matches(&mut output, "test", true, false, None).unwrap();
         let output_str = String::from_utf8(output).unwrap();
-        
+
         // Check that color codes are present
         assert!(output_str.contains("\x1b["));
+    }
+
+    #[tokio::test]
+    async fn test_create_items_channel() {
+        let (sender, mut receiver) = create_items_channel();
+
+        // Send some items
+        sender.send("item1".to_string()).await.unwrap();
+        sender.send("item2".to_string()).await.unwrap();
+        drop(sender); // Close the sender
+
+        // Collect items from receiver
+        let mut collected = Vec::new();
+        while let Some(item) = receiver.recv().await {
+            collected.push(item);
+        }
+
+        assert_eq!(collected, vec!["item1".to_string(), "item2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_handle_async_key_event_ctrl_c() {
+        use crate::fuzzy::FuzzyFinder;
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let items = vec!["apple".to_string(), "banana".to_string()];
+        let mut finder = FuzzyFinder::with_items_async(items, false).await;
+
+        let key_event = crossterm::event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let action = handle_async_key_event(&key_event, &mut finder).await;
+
+        assert_eq!(action, crate::tui::controls::Action::Exit);
     }
 }
