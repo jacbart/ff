@@ -9,7 +9,10 @@ use crossterm::{
     },
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
 };
-use std::io::{self, Write};
+use std::{
+    io::{self, Write},
+    mem,
+};
 use tokio::sync::mpsc;
 
 /// Configuration for TUI display mode and height
@@ -154,13 +157,8 @@ async fn run_interactive_tui(
             match items_receiver.try_recv() {
                 Ok(item) => {
                     items_buffer.push(item);
-                    // Add items in batches to avoid too frequent updates
-                    if items_buffer.len() >= 10 {
-                        fuzzy_finder
-                            .add_items(items_buffer.drain(..).collect())
-                            .await;
-                        needs_redraw = true;
-                    }
+                    fuzzy_finder.add_items(mem::take(&mut items_buffer)).await;
+                    needs_redraw = true;
                 }
                 Err(mpsc::error::TryRecvError::Empty) => {
                     // No items available right now, continue with other processing
@@ -169,9 +167,7 @@ async fn run_interactive_tui(
                     receiver_exhausted = true;
                     // Add any remaining buffered items
                     if !items_buffer.is_empty() {
-                        fuzzy_finder
-                            .add_items(items_buffer.drain(..).collect())
-                            .await;
+                        fuzzy_finder.add_items(mem::take(&mut items_buffer)).await;
                         needs_redraw = true;
                     }
                 }
@@ -182,7 +178,11 @@ async fn run_interactive_tui(
         let tui_height = config.calculate_height(term_height);
         // Always reserve 1 line for prompt, 1 for result if possible, 1 for instructions
         let available_height = if tui_height > 2 {
-            tui_height - 2 // 1 for prompt, 1 for instructions
+            if config.show_help_text {
+                tui_height - 2 // 1 for prompt, 1 for instructions
+            } else {
+                tui_height - 1
+            }
         } else if tui_height == 2 {
             1 // Only room for prompt and one result
         } else {
@@ -206,8 +206,10 @@ async fn run_interactive_tui(
             }
 
             // Draw search prompt
+            let prompt_y = if fullscreen { 0 } else { original_cursor.1 };
             execute!(
                 &mut stdout,
+                MoveTo(0, prompt_y),
                 SetForegroundColor(Color::Cyan),
                 Print("> "),
                 ResetColor,
@@ -625,18 +627,18 @@ mod tests {
     #[tokio::test]
     async fn test_create_items_channel() {
         let (sender, mut receiver) = create_items_channel();
-        
+
         // Send some items
         sender.send("item1".to_string()).await.unwrap();
         sender.send("item2".to_string()).await.unwrap();
         drop(sender); // Close the sender
-        
+
         // Collect items from receiver
         let mut collected = Vec::new();
         while let Some(item) = receiver.recv().await {
             collected.push(item);
         }
-        
+
         assert_eq!(collected, vec!["item1".to_string(), "item2".to_string()]);
     }
 
@@ -644,13 +646,13 @@ mod tests {
     async fn test_handle_async_key_event_ctrl_c() {
         use crate::fuzzy::FuzzyFinder;
         use crossterm::event::{KeyCode, KeyModifiers};
-        
+
         let items = vec!["apple".to_string(), "banana".to_string()];
         let mut finder = FuzzyFinder::with_items_async(items, false).await;
-        
+
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         let action = handle_async_key_event(&key_event, &mut finder).await;
-        
+
         assert_eq!(action, crate::tui::controls::Action::Exit);
     }
 }

@@ -66,6 +66,7 @@ pub async fn send_input_to_channel(
     source: &str,
     sender: mpsc::Sender<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    // clean source
     if let Some(stripped) = source.strip_prefix("unix://") {
         send_from_unix_socket(stripped, sender).await
     } else if source.starts_with("http://") || source.starts_with("https://") {
@@ -81,7 +82,7 @@ pub async fn send_input_to_channel(
     } else {
         // Treat as space-separated list
         for item in source.split_whitespace() {
-            if sender.send(item.to_string()).await.is_err() {
+            if !item.trim().is_empty() && sender.send(item.trim().to_string()).await.is_err() {
                 break; // Channel closed
             }
         }
@@ -94,7 +95,9 @@ async fn read_from_file(file_path: &str) -> Result<Vec<String>, Box<dyn std::err
     Ok(content.lines().map(|s| s.to_string()).collect())
 }
 
-async fn read_from_unix_socket(socket_path: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+async fn read_from_unix_socket(
+    socket_path: &str,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let stream = UnixStream::connect(socket_path)
         .await
         .map_err(|e| format!("Failed to connect to Unix socket: {e}"))?;
@@ -105,7 +108,7 @@ async fn read_from_unix_socket(socket_path: &str) -> Result<Vec<String>, Box<dyn
         .read_to_end(&mut buffer)
         .await
         .map_err(|e| format!("Failed to read from Unix socket: {e}"))?;
-    
+
     if bytes_read == 0 {
         return Ok(Vec::new());
     }
@@ -128,7 +131,7 @@ async fn read_from_http_socket(url: &str) -> Result<Vec<String>, Box<dyn std::er
         .read_to_end(&mut buffer)
         .await
         .map_err(|e| format!("Failed to read from HTTP socket: {e}"))?;
-    
+
     let content = String::from_utf8_lossy(&buffer);
     Ok(content.lines().map(|s| s.to_string()).collect())
 }
@@ -151,17 +154,23 @@ async fn read_from_directory(dir_path: &str) -> Result<Vec<String>, Box<dyn std:
     Ok(items)
 }
 
-async fn send_from_file(file_path: &str, sender: mpsc::Sender<String>) -> Result<(), Box<dyn std::error::Error>> {
+async fn send_from_file(
+    file_path: &str,
+    sender: mpsc::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let content = fs::read_to_string(file_path).await?;
     for line in content.lines() {
-        if sender.send(line.to_string()).await.is_err() {
+        if !line.trim().is_empty() && sender.send(line.trim().to_string()).await.is_err() {
             break; // Channel closed
         }
     }
     Ok(())
 }
 
-async fn send_from_unix_socket(socket_path: &str, sender: mpsc::Sender<String>) -> Result<(), Box<dyn std::error::Error>> {
+async fn send_from_unix_socket(
+    socket_path: &str,
+    sender: mpsc::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let stream = UnixStream::connect(socket_path)
         .await
         .map_err(|e| format!("Failed to connect to Unix socket: {e}"))?;
@@ -172,21 +181,24 @@ async fn send_from_unix_socket(socket_path: &str, sender: mpsc::Sender<String>) 
         .read_to_end(&mut buffer)
         .await
         .map_err(|e| format!("Failed to read from Unix socket: {e}"))?;
-    
+
     if bytes_read == 0 {
         return Ok(());
     }
 
     let content = String::from_utf8(buffer)?;
     for line in content.lines() {
-        if sender.send(line.to_string()).await.is_err() {
+        if !line.trim().is_empty() && sender.send(line.trim().to_string()).await.is_err() {
             break; // Channel closed
         }
     }
     Ok(())
 }
 
-async fn send_from_http_socket(url: &str, sender: mpsc::Sender<String>) -> Result<(), Box<dyn std::error::Error>> {
+async fn send_from_http_socket(
+    url: &str,
+    sender: mpsc::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     // Simple HTTP client implementation without external dependencies
     let url = url.replace("http://", "").replace("https://", "");
     let stream = tokio::net::TcpStream::connect(url)
@@ -200,17 +212,20 @@ async fn send_from_http_socket(url: &str, sender: mpsc::Sender<String>) -> Resul
         .read_to_end(&mut buffer)
         .await
         .map_err(|e| format!("Failed to read from HTTP socket: {e}"))?;
-    
+
     let content = String::from_utf8_lossy(&buffer);
     for line in content.lines() {
-        if sender.send(line.to_string()).await.is_err() {
+        if !line.trim().is_empty() && sender.send(line.trim().to_string()).await.is_err() {
             break; // Channel closed
         }
     }
     Ok(())
 }
 
-async fn send_from_directory(dir_path: &str, sender: mpsc::Sender<String>) -> Result<(), Box<dyn std::error::Error>> {
+async fn send_from_directory(
+    dir_path: &str,
+    sender: mpsc::Sender<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     let mut entries = fs::read_dir(dir_path)
         .await
         .map_err(|e| format!("Failed to read directory '{dir_path}': {e}"))?;
@@ -219,7 +234,9 @@ async fn send_from_directory(dir_path: &str, sender: mpsc::Sender<String>) -> Re
         let path = entry.path();
         if let Some(name) = path.file_name() {
             if let Some(name_str) = name.to_str() {
-                if sender.send(name_str.to_string()).await.is_err() {
+                if !name_str.trim().is_empty()
+                    && sender.send(name_str.trim().to_string()).await.is_err()
+                {
                     break; // Channel closed
                 }
             }
