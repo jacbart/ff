@@ -9,8 +9,8 @@ use crossterm::{
     },
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
 };
-use futures::stream::{Stream, StreamExt};
 use std::io::{self, Write};
+use tokio::sync::mpsc;
 
 /// Configuration for TUI display mode and height
 #[derive(Debug, Clone)]
@@ -87,36 +87,29 @@ impl TuiConfig {
     }
 }
 
-/// Run an async interactive TUI for fuzzy finding through a stream of items.
-pub async fn run_tui<S: Stream<Item = String> + Send + 'static>(
-    items_stream: S,
+/// Run an async interactive TUI for fuzzy finding through an mpsc receiver of items.
+pub async fn run_tui(
+    items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    run_tui_with_config(items_stream, multi_select, TuiConfig::default()).await
+    run_tui_with_config(items_receiver, multi_select, TuiConfig::default()).await
 }
 
 /// Run an async interactive TUI with custom configuration for height and display mode.
-pub async fn run_tui_with_config<S>(
-    items_stream: S,
+pub async fn run_tui_with_config(
+    items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
     config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error>>
-where
-    S: Stream<Item = String> + Send + 'static,
-{
-    run_interactive_tui(items_stream, multi_select, config).await
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    run_interactive_tui(items_receiver, multi_select, config).await
 }
 
 /// Run the async interactive TUI
-async fn run_interactive_tui<S>(
-    items_stream: S,
+async fn run_interactive_tui(
+    mut items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
     config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error>>
-where
-    S: Stream<Item = String> + Send + 'static,
-{
-    let mut items_stream = Box::pin(items_stream);
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut fuzzy_finder = FuzzyFinder::new(multi_select);
     let mut stdout = io::stdout();
 
@@ -153,13 +146,13 @@ where
     let mut selected_items = Vec::new();
     let mut needs_redraw = true;
     let mut items_buffer = Vec::new();
-    let mut stream_exhausted = false;
+    let mut receiver_exhausted = false;
 
     loop {
-        // Process new items from stream
-        if !stream_exhausted {
-            match items_stream.next().await {
-                Some(item) => {
+        // Process new items from mpsc receiver
+        if !receiver_exhausted {
+            match items_receiver.try_recv() {
+                Ok(item) => {
                     items_buffer.push(item);
                     // Add items in batches to avoid too frequent updates
                     if items_buffer.len() >= 10 {
@@ -169,8 +162,11 @@ where
                         needs_redraw = true;
                     }
                 }
-                None => {
-                    stream_exhausted = true;
+                Err(mpsc::error::TryRecvError::Empty) => {
+                    // No items available right now, continue with other processing
+                }
+                Err(mpsc::error::TryRecvError::Disconnected) => {
+                    receiver_exhausted = true;
                     // Add any remaining buffered items
                     if !items_buffer.is_empty() {
                         fuzzy_finder
@@ -271,12 +267,12 @@ where
                 if multi_select {
                     execute!(
                         &mut stdout,
-                        Print("Tab/Space: Toggle | Enter: Confirm | Esc: Exit")
+                        Print("Tab/Space: Toggle | Enter: Confirm | Esc/Ctrl+C/Ctrl+Q: Exit")
                     )?;
                 } else {
                     execute!(
                         &mut stdout,
-                        Print("↑/↓: Navigate | Enter: Select | Esc: Exit")
+                        Print("↑/↓: Navigate | Enter: Select | Esc/Ctrl+C/Ctrl+Q: Exit")
                     )?;
                 }
                 execute!(&mut stdout, ResetColor)?;
@@ -341,18 +337,9 @@ where
     Ok(selected_items)
 }
 
-/// Create a stream that yields items at regular intervals (useful for testing)
-pub fn create_interval_stream(items: Vec<String>, interval_ms: u64) -> impl Stream<Item = String> {
-    use tokio::time::{sleep, Duration};
-
-    futures::stream::unfold((items, 0), move |(items, index)| async move {
-        if index < items.len() {
-            sleep(Duration::from_millis(interval_ms)).await;
-            Some((items[index].clone(), (items, index + 1)))
-        } else {
-            None
-        }
-    })
+/// Create an mpsc channel for sending items to the TUI
+pub fn create_items_channel() -> (mpsc::Sender<String>, mpsc::Receiver<String>) {
+    mpsc::channel(1000) // Buffer size of 1000 items
 }
 
 /// Handle key events in async mode
@@ -362,7 +349,7 @@ async fn handle_async_key_event(
 ) -> crate::tui::controls::Action {
     match key_event.code {
         KeyCode::Char(c) => {
-            if c == 'q' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
+            if (c == 'q' || c == 'c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
                 Action::Exit
             } else if c == ' ' && fuzzy_finder.is_multi_select() {
                 fuzzy_finder.toggle_selection();
@@ -636,10 +623,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_create_interval_stream() {
-        let items = vec!["item1".to_string(), "item2".to_string()];
-        let stream = create_interval_stream(items, 10); // 10ms interval
-        let collected: Vec<String> = stream.collect().await;
+    async fn test_create_items_channel() {
+        let (sender, mut receiver) = create_items_channel();
+        
+        // Send some items
+        sender.send("item1".to_string()).await.unwrap();
+        sender.send("item2".to_string()).await.unwrap();
+        drop(sender); // Close the sender
+        
+        // Collect items from receiver
+        let mut collected = Vec::new();
+        while let Some(item) = receiver.recv().await {
+            collected.push(item);
+        }
+        
         assert_eq!(collected, vec!["item1".to_string(), "item2".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn test_handle_async_key_event_ctrl_c() {
+        use crate::fuzzy::FuzzyFinder;
+        use crossterm::event::{KeyCode, KeyModifiers};
+        
+        let items = vec!["apple".to_string(), "banana".to_string()];
+        let mut finder = FuzzyFinder::with_items_async(items, false).await;
+        
+        let key_event = crossterm::event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+        let action = handle_async_key_event(&key_event, &mut finder).await;
+        
+        assert_eq!(action, crate::tui::controls::Action::Exit);
     }
 }

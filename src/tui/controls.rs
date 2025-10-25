@@ -16,7 +16,7 @@ pub enum Action {
 pub fn handle_key_event(key_event: &KeyEvent, fuzzy_finder: &mut FuzzyFinder) -> Action {
     match key_event.code {
         KeyCode::Char(c) => {
-            if c == 'q' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
+            if (c == 'q' || c == 'c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
                 Action::Exit
             } else if c == ' ' && fuzzy_finder.is_multi_select() {
                 fuzzy_finder.toggle_selection();
@@ -96,6 +96,17 @@ mod tests {
         let mut finder = FuzzyFinder::with_items_async(items, false).await;
         
         let key_event = KeyEvent::new(KeyCode::Char('q'), KeyModifiers::CONTROL);
+        let action = handle_key_event(&key_event, &mut finder);
+        
+        assert_eq!(action, Action::Exit);
+    }
+
+    #[tokio::test]
+    async fn test_handle_key_event_ctrl_c() {
+        let items = vec!["apple".to_string(), "banana".to_string()];
+        let mut finder = FuzzyFinder::with_items_async(items, false).await;
+        
+        let key_event = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
         let action = handle_key_event(&key_event, &mut finder);
         
         assert_eq!(action, Action::Exit);

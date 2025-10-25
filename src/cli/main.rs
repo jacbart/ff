@@ -5,8 +5,8 @@ use crate::cli::planner::{plan_cli_action, CliAction};
 use crate::cli::tty::check_tty_requirements;
 use crate::config;
 use crate::get_build_info;
-use crate::input::read_input;
-use crate::tui::ui::{run_tui, run_tui_with_config};
+use crate::input::{read_input, send_input_to_channel};
+use crate::tui::ui::{run_tui_with_config, create_items_channel};
 use crate::tui::TuiConfig;
 
 /// Read items from a file.
@@ -117,56 +117,47 @@ pub fn handle_tui_results(selected: Vec<String>) -> Vec<String> {
     selected
 }
 
-/// Run TUI with validation and error handling.
-pub fn run_tui_with_validation(
-    items: Vec<String>,
-    multi_select: bool,
-) -> Result<Vec<String>, String> {
-    let processed_items = process_items(items)?;
-
-    validate_tty_requirements()?;
-
-    match run_tui(processed_items, multi_select) {
-        Ok(selected) => Ok(handle_tui_results(selected)),
-        Err(err) => Err(format!("TUI error: {err}")),
-    }
-}
-
-/// Run TUI with height configuration and validation.
-pub fn run_tui_with_height_validation(
-    items: Vec<String>,
-    multi_select: bool,
-    height: Option<u16>,
-    height_percentage: Option<f32>,
-) -> Result<Vec<String>, String> {
-    let processed_items = process_items(items)?;
-
-    validate_tty_requirements()?;
-
-    let config = if let Some(h) = height {
-        TuiConfig::with_height(h)
-    } else if let Some(p) = height_percentage {
-        TuiConfig::with_height_percentage(p)
-    } else {
-        TuiConfig::fullscreen()
-    };
-
-    match run_tui_with_config(processed_items, multi_select, config) {
-        Ok(selected) => Ok(handle_tui_results(selected)),
-        Err(err) => Err(format!("TUI error: {err}")),
-    }
-}
-
-/// Run async TUI with height configuration and validation.
+/// Run async TUI with height configuration and validation using mpsc.
 pub async fn run_async_tui_with_height_validation(
     items: Vec<String>,
     multi_select: bool,
     height: Option<u16>,
     height_percentage: Option<f32>,
 ) -> Result<Vec<String>, String> {
-    let processed_items = process_items_async(items).await?;
-
     validate_tty_requirements()?;
+
+    // Create mpsc channel for items
+    let (sender, receiver) = create_items_channel();
+    
+    // Spawn task to send items to the channel
+    let items_clone = items.clone();
+    let sender_clone = sender.clone();
+    tokio::spawn(async move {
+        if items_clone.len() == 1 {
+            let item = &items_clone[0];
+            if item.starts_with("unix://")
+                || item.starts_with("http://")
+                || item.starts_with("https://")
+            {
+                let _ = send_input_to_channel(item, sender_clone).await;
+            } else if let Some(dir_path) = item.strip_prefix("dir:") {
+                let _ = send_input_to_channel(&format!("dir:{}", dir_path), sender_clone).await;
+            } else if looks_like_file_path(item) {
+                let _ = send_input_to_channel(item, sender_clone).await;
+            } else {
+                // Direct items
+                for direct_item in items_clone {
+                    let _ = sender_clone.send(direct_item).await;
+                }
+            }
+        } else {
+            // Multiple direct items
+            for direct_item in items_clone {
+                let _ = sender_clone.send(direct_item).await;
+            }
+        }
+        // Sender will be dropped automatically when the task ends
+    });
 
     let config = if let Some(h) = height {
         TuiConfig::with_height(h)
@@ -176,7 +167,7 @@ pub async fn run_async_tui_with_height_validation(
         TuiConfig::fullscreen()
     };
 
-    match run_tui_with_config(processed_items, multi_select, config).await {
+    match run_tui_with_config(receiver, multi_select, config).await {
         Ok(selected) => Ok(handle_tui_results(selected)),
         Err(err) => Err(format!("Async TUI error: {err}")),
     }
@@ -204,14 +195,46 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
             // For async TUI, we need to run it in a tokio runtime
             let rt = tokio::runtime::Runtime::new()?;
             let _result = rt.block_on(async {
-                let processed_items = process_items_async(items).await?;
+                // Create mpsc channel for items
+                let (sender, receiver) = create_items_channel();
+                
+                // Spawn task to send items to the channel
+                let items_clone = items.clone();
+                let sender_clone = sender.clone();
+                tokio::spawn(async move {
+                    if items_clone.len() == 1 {
+                        let item = &items_clone[0];
+                        if item.starts_with("unix://")
+                            || item.starts_with("http://")
+                            || item.starts_with("https://")
+                        {
+                            let _ = send_input_to_channel(item, sender_clone).await;
+                        } else if let Some(dir_path) = item.strip_prefix("dir:") {
+                            let _ = send_input_to_channel(&format!("dir:{}", dir_path), sender_clone).await;
+                        } else if looks_like_file_path(item) {
+                            let _ = send_input_to_channel(item, sender_clone).await;
+                        } else {
+                            // Direct items
+                            for direct_item in items_clone {
+                                let _ = sender_clone.send(direct_item).await;
+                            }
+                        }
+                    } else {
+                        // Multiple direct items
+                        for direct_item in items_clone {
+                            let _ = sender_clone.send(direct_item).await;
+                        }
+                    }
+                    // Sender will be dropped automatically when the task ends
+                });
+                
                 let config = TuiConfig {
                     fullscreen: height.is_none() && height_percentage.is_none(),
                     height,
                     height_percentage,
                     show_help_text,
                 };
-                let selected = run_tui_with_config(processed_items, multi_select, config).await?;
+                let selected = run_tui_with_config(receiver, multi_select, config).await?;
                 Ok::<Vec<String>, Box<dyn std::error::Error>>(selected)
             })?;
 
@@ -414,29 +437,6 @@ mod tests {
     fn test_validate_tty_requirements() {
         // This test depends on the actual TTY check implementation
         // We can't easily mock this in a unit test, so we just test that it doesn't panic
-        let _result = validate_tty_requirements();
-        // If we get here, it didn't panic
-    }
-
-    #[test]
-    fn test_run_tui_with_validation_success() {
-        // This test would require mocking the TUI and TTY functions
-        // For now, we'll test the error cases that we can control
-        let items = vec![];
-        let result = run_tui_with_validation(items, false);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("No items to search through"));
-    }
-
-    #[test]
-    fn test_run_tui_with_validation_with_items() {
-        let items = vec!["item1".to_string(), "item2".to_string()];
-        // Test only the validation logic, not the actual TUI execution
-        // The TUI requires interactive input which we can't test in automated tests
-        let processed_items = process_items(items).unwrap();
-        assert_eq!(processed_items, vec!["item1", "item2"]);
-
-        // Test that validate_tty_requirements doesn't panic
         let _result = validate_tty_requirements();
         // If we get here, it didn't panic
     }
