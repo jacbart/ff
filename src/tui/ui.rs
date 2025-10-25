@@ -325,15 +325,9 @@ async fn run_interactive_tui(
     // Restore terminal state
     disable_raw_mode()?;
 
-    // Print selected items at the original cursor position
     if !selected_items.is_empty() {
         // Move to the original cursor position
         execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
-
-        // Print each selected item
-        for item in &selected_items {
-            println!("{item}");
-        }
     }
 
     Ok(selected_items)

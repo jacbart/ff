@@ -6,7 +6,7 @@ use crate::cli::tty::check_tty_requirements;
 use crate::config;
 use crate::get_build_info;
 use crate::input::{read_input, send_input_to_channel};
-use crate::tui::ui::{run_tui_with_config, create_items_channel};
+use crate::tui::ui::{create_items_channel, run_tui_with_config};
 use crate::tui::TuiConfig;
 
 /// Read items from a file.
@@ -128,7 +128,7 @@ pub async fn run_async_tui_with_height_validation(
 
     // Create mpsc channel for items
     let (sender, receiver) = create_items_channel();
-    
+
     // Spawn task to send items to the channel
     let items_clone = items.clone();
     let sender_clone = sender.clone();
@@ -194,10 +194,10 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
         } => {
             // For async TUI, we need to run it in a tokio runtime
             let rt = tokio::runtime::Runtime::new()?;
-            let _result = rt.block_on(async {
+            let result = rt.block_on(async {
                 // Create mpsc channel for items
                 let (sender, receiver) = create_items_channel();
-                
+
                 // Spawn task to send items to the channel
                 let items_clone = items.clone();
                 let sender_clone = sender.clone();
@@ -210,7 +210,9 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                         {
                             let _ = send_input_to_channel(item, sender_clone).await;
                         } else if let Some(dir_path) = item.strip_prefix("dir:") {
-                            let _ = send_input_to_channel(&format!("dir:{}", dir_path), sender_clone).await;
+                            let _ =
+                                send_input_to_channel(&format!("dir:{}", dir_path), sender_clone)
+                                    .await;
                         } else if looks_like_file_path(item) {
                             let _ = send_input_to_channel(item, sender_clone).await;
                         } else {
@@ -227,7 +229,7 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     // Sender will be dropped automatically when the task ends
                 });
-                
+
                 let config = TuiConfig {
                     fullscreen: height.is_none() && height_percentage.is_none(),
                     height,
@@ -238,7 +240,10 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                 Ok::<Vec<String>, Box<dyn std::error::Error>>(selected)
             })?;
 
-            // Don't print here - the TUI will handle output
+            // Print each selected item
+            for item in result {
+                println!("{item}");
+            }
             Ok(())
         }
         CliAction::Error(msg) => {
