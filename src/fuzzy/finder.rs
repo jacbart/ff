@@ -18,7 +18,7 @@ pub struct FuzzyFinder {
     pub(crate) query: String,
     pub(crate) filtered_items: Vec<String>,
     pub(crate) match_positions: Vec<MatchPositions>,
-    pub(crate) selected_indices: Vec<usize>,
+    pub(crate) selected_items: std::collections::HashSet<String>,
     pub(crate) cursor_position: usize,
     pub(crate) multi_select: bool,
     pub(crate) query_cache: std::collections::HashMap<String, Vec<String>>,
@@ -37,7 +37,7 @@ impl FuzzyFinder {
             query: String::new(),
             filtered_items: Vec::new(),
             match_positions: Vec::new(),
-            selected_indices: Vec::new(),
+            selected_items: std::collections::HashSet::new(),
             cursor_position: 0,
             multi_select,
             query_cache: std::collections::HashMap::new(),
@@ -82,7 +82,7 @@ impl FuzzyFinder {
 
             self.filtered_items = results;
             self.calculate_match_positions();
-            
+
             self.query_cache
                 .insert(self.query.clone(), self.filtered_items.clone());
         }
@@ -101,12 +101,13 @@ impl FuzzyFinder {
     fn calculate_match_positions(&mut self) {
         self.match_positions.clear();
         let query_lower = self.query.to_lowercase();
-        
+
         for item in &self.filtered_items {
             let item_lower = item.to_lowercase();
             let positions = self.find_match_positions(&item_lower, &query_lower);
             let score = self.calculate_enhanced_score(item, &query_lower);
-            self.match_positions.push(MatchPositions { positions, score });
+            self.match_positions
+                .push(MatchPositions { positions, score });
         }
     }
 
@@ -186,13 +187,13 @@ impl FuzzyFinder {
         if query_chars.peek().is_none() {
             // Base score for matching all characters
             score = 0.5;
-            
+
             // Bonus for consecutive matches
             score += consecutive as f64 * 0.1;
-            
+
             // Bonus for total matches
             score += total_matches as f64 * 0.05;
-            
+
             // Penalty for length difference
             let length_diff = (item_lower.len() as i32 - query_lower.len() as i32).abs() as f64;
             score -= length_diff * 0.01;
@@ -211,7 +212,7 @@ impl FuzzyFinder {
         // Handle large movements by using modulo arithmetic
         let current_pos = self.cursor_position as i32;
         let new_position = current_pos + direction;
-        
+
         // Use modulo to handle wrapping correctly for both positive and negative movements
         let wrapped_position = if new_position < 0 {
             // For negative numbers, we need to handle the wrapping differently
@@ -225,7 +226,7 @@ impl FuzzyFinder {
         } else {
             new_position % len as i32
         };
-        
+
         self.cursor_position = wrapped_position as usize;
     }
 
@@ -235,33 +236,22 @@ impl FuzzyFinder {
             return;
         }
 
-        let selected_item = &self.filtered_items[self.cursor_position];
-        if let Some(original_index) = self
-            .stream
-            .get_all_items()
-            .iter()
-            .position(|item| item == selected_item)
-        {
-            if let Some(pos) = self
-                .selected_indices
-                .iter()
-                .position(|&idx| idx == original_index)
-            {
-                self.selected_indices.remove(pos);
-            } else {
-                self.selected_indices.push(original_index);
-            }
+        let selected_item = self.filtered_items[self.cursor_position].clone();
+        if self.selected_items.contains(&selected_item) {
+            self.selected_items.remove(&selected_item);
+        } else {
+            self.selected_items.insert(selected_item);
         }
     }
 
     /// Get selected items
     pub fn get_selected_items(&self) -> Vec<String> {
-        let all_items = self.stream.get_all_items();
-        self.selected_indices
-            .iter()
-            .filter_map(|&idx| all_items.get(idx))
-            .cloned()
-            .collect()
+        self.selected_items.iter().cloned().collect()
+    }
+
+    /// Check if an item is selected
+    pub fn is_selected(&self, item: &str) -> bool {
+        self.selected_items.contains(item)
     }
 
     /// Set query and update filter

@@ -120,7 +120,10 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     }
 
     // Check for special input sources
-    if input_source.starts_with("unix://") || input_source.starts_with("http://") || input_source.starts_with("https://") {
+    if input_source.starts_with("unix://")
+        || input_source.starts_with("http://")
+        || input_source.starts_with("https://")
+    {
         return CliAction::RunAsyncTui {
             items: vec![input_source],
             multi_select,

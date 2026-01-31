@@ -14,7 +14,7 @@ impl LSHIndex {
     /// Create a new LSH index with the specified number of hash functions
     pub fn new(num_hashes: usize) -> Self {
         let mut hash_functions: Vec<HashFunction> = Vec::new();
-        
+
         for i in 0..num_hashes {
             let seed = i as u64;
             let hash_fn: HashFunction = Box::new(move |s: &str| {
@@ -25,13 +25,13 @@ impl LSHIndex {
             });
             hash_functions.push(hash_fn);
         }
-        
+
         Self {
             buckets: HashMap::new(),
             hash_functions,
         }
     }
-    
+
     /// Add an item to the LSH index
     pub fn insert(&mut self, item: String) {
         for hash_fn in &self.hash_functions {
@@ -39,11 +39,11 @@ impl LSHIndex {
             self.buckets.entry(hash).or_default().push(item.clone());
         }
     }
-    
+
     /// Find similar items based on LSH buckets
     pub fn find_similar(&self, query: &str, threshold: usize) -> Vec<String> {
         let mut candidates = HashMap::new();
-        
+
         for hash_fn in &self.hash_functions {
             let hash = hash_fn(query);
             if let Some(bucket) = self.buckets.get(&hash) {
@@ -52,14 +52,14 @@ impl LSHIndex {
                 }
             }
         }
-        
+
         candidates
             .into_iter()
             .filter(|(_, count)| *count >= threshold)
             .map(|(item, _)| item)
             .collect()
     }
-    
+
     /// Get all items in the index
     pub fn all_items(&self) -> Vec<String> {
         let mut items = std::collections::HashSet::new();
@@ -68,7 +68,7 @@ impl LSHIndex {
         }
         items.into_iter().collect()
     }
-    
+
     /// Clear all items from the index
     pub fn clear(&mut self) {
         self.buckets.clear();
@@ -79,10 +79,10 @@ impl LSHIndex {
 pub fn similarity(a: &str, b: &str) -> f64 {
     let a_chars: std::collections::HashSet<char> = a.chars().collect();
     let b_chars: std::collections::HashSet<char> = b.chars().collect();
-    
+
     let intersection = a_chars.intersection(&b_chars).count();
     let union = a_chars.union(&b_chars).count();
-    
+
     if union == 0 {
         0.0
     } else {
@@ -105,7 +105,7 @@ mod tests {
     fn test_lsh_index_insert() {
         let mut index = LSHIndex::new(2);
         index.insert("test".to_string());
-        
+
         let all_items = index.all_items();
         assert_eq!(all_items.len(), 1);
         assert!(all_items.contains(&"test".to_string()));
@@ -117,7 +117,7 @@ mod tests {
         index.insert("apple".to_string());
         index.insert("application".to_string());
         index.insert("banana".to_string());
-        
+
         let similar = index.find_similar("apple", 1);
         assert!(!similar.is_empty());
     }
@@ -134,8 +134,8 @@ mod tests {
         let mut index = LSHIndex::new(2);
         index.insert("test".to_string());
         assert!(!index.all_items().is_empty());
-        
+
         index.clear();
         assert!(index.all_items().is_empty());
     }
-} 
+}

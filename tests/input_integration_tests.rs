@@ -86,7 +86,10 @@ async fn test_read_input_from_file_with_mixed_content() {
 
     let result = read_input(temp_file).await;
     assert!(result.is_ok());
-    assert_eq!(result.unwrap(), vec!["  item1  ", "", "  item2  ", "  ", "  item3  "]);
+    assert_eq!(
+        result.unwrap(),
+        vec!["  item1  ", "", "  item2  ", "  ", "  item3  "]
+    );
 
     // Clean up
     std::fs::remove_file(temp_file).unwrap();

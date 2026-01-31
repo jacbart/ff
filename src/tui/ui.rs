@@ -230,7 +230,7 @@ async fn run_interactive_tui(
                     execute!(&mut stdout, MoveTo(0, y_pos))?;
 
                     let is_cursor = i == fuzzy_finder.get_cursor_position();
-                    let is_selected = fuzzy_finder.selected_indices.contains(&i);
+                    let is_selected = fuzzy_finder.is_selected(item);
 
                     draw_highlighted_item_with_matches(
                         &mut stdout,

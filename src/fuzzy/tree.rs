@@ -290,4 +290,4 @@ mod tests {
         assert!(tree.is_empty());
         assert_eq!(tree.size(), 0);
     }
-} 
+}
