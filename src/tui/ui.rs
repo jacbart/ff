@@ -94,7 +94,7 @@ impl TuiConfig {
 pub async fn run_tui(
     items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
     run_tui_with_config(items_receiver, multi_select, TuiConfig::default()).await
 }
 
@@ -103,7 +103,7 @@ pub async fn run_tui_with_config(
     items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
     config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
     run_interactive_tui(items_receiver, multi_select, config).await
 }
 
@@ -112,7 +112,7 @@ async fn run_interactive_tui(
     mut items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
     config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
     let mut fuzzy_finder = FuzzyFinder::new(multi_select);
     let mut stdout = io::stdout();
 
@@ -150,27 +150,36 @@ async fn run_interactive_tui(
     let mut needs_redraw = true;
     let mut items_buffer = Vec::new();
     let mut receiver_exhausted = false;
+    let mut scroll_offset = 0;
 
     loop {
         // Process new items from mpsc receiver
         if !receiver_exhausted {
-            match items_receiver.try_recv() {
-                Ok(item) => {
-                    items_buffer.push(item);
-                    fuzzy_finder.add_items(mem::take(&mut items_buffer)).await;
-                    needs_redraw = true;
-                }
-                Err(mpsc::error::TryRecvError::Empty) => {
-                    // No items available right now, continue with other processing
-                }
-                Err(mpsc::error::TryRecvError::Disconnected) => {
-                    receiver_exhausted = true;
-                    // Add any remaining buffered items
-                    if !items_buffer.is_empty() {
-                        fuzzy_finder.add_items(mem::take(&mut items_buffer)).await;
-                        needs_redraw = true;
+            let mut batch_count = 0;
+            const MAX_BATCH_SIZE: usize = 1000;
+
+            loop {
+                match items_receiver.try_recv() {
+                    Ok(item) => {
+                        items_buffer.push(item);
+                        batch_count += 1;
+                        if batch_count >= MAX_BATCH_SIZE {
+                            break;
+                        }
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        break;
+                    }
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        receiver_exhausted = true;
+                        break;
                     }
                 }
+            }
+
+            if !items_buffer.is_empty() {
+                fuzzy_finder.add_items(mem::take(&mut items_buffer)).await;
+                needs_redraw = true;
             }
         }
 
@@ -188,6 +197,20 @@ async fn run_interactive_tui(
         } else {
             0 // Only room for prompt
         };
+
+        // Update scroll offset to keep cursor in view
+        let cursor_pos = fuzzy_finder.get_cursor_position();
+        if cursor_pos < scroll_offset {
+            scroll_offset = cursor_pos;
+        } else if cursor_pos >= scroll_offset + available_height as usize {
+            scroll_offset = cursor_pos - available_height as usize + 1;
+        }
+
+        // Ensure scroll offset is valid (e.g. if list shrank)
+        let total_items = fuzzy_finder.get_filtered_items().len();
+        if scroll_offset > total_items {
+            scroll_offset = total_items.saturating_sub(available_height as usize);
+        }
 
         // Only redraw if needed (when query changes or cursor moves)
         if needs_redraw {
@@ -219,9 +242,13 @@ async fn run_interactive_tui(
             // Draw items
             if tui_height >= 2 && available_height > 0 {
                 let filtered_items = fuzzy_finder.get_filtered_items();
-                let visible_items = filtered_items.iter().take(available_height as usize);
+                let visible_items = filtered_items
+                    .iter()
+                    .skip(scroll_offset)
+                    .take(available_height as usize);
 
                 for (i, item) in visible_items.enumerate() {
+                    let absolute_index = scroll_offset + i;
                     let y_pos = if fullscreen {
                         (i + 1) as u16
                     } else {
@@ -229,7 +256,7 @@ async fn run_interactive_tui(
                     };
                     execute!(&mut stdout, MoveTo(0, y_pos))?;
 
-                    let is_cursor = i == fuzzy_finder.get_cursor_position();
+                    let is_cursor = absolute_index == fuzzy_finder.get_cursor_position();
                     let is_selected = fuzzy_finder.is_selected(item);
 
                     draw_highlighted_item_with_matches(
@@ -237,7 +264,7 @@ async fn run_interactive_tui(
                         item,
                         is_cursor,
                         is_selected,
-                        fuzzy_finder.get_match_positions(i),
+                        fuzzy_finder.get_match_positions(absolute_index),
                     )?;
                     execute!(&mut stdout, ResetColor)?;
                 }

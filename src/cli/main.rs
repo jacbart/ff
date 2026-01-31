@@ -236,7 +236,9 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                     height_percentage,
                     show_help_text,
                 };
-                let selected = run_tui_with_config(receiver, multi_select, config).await?;
+                let selected = run_tui_with_config(receiver, multi_select, config)
+                    .await
+                    .map_err(|e| e as Box<dyn std::error::Error>)?;
                 Ok::<Vec<String>, Box<dyn std::error::Error>>(selected)
             })?;
 

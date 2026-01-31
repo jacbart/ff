@@ -1,7 +1,4 @@
-use crate::fuzzy::lsh::LSHIndex;
-use crate::fuzzy::quicksort::quicksort;
 use crate::fuzzy::stream::ItemStream;
-use crate::fuzzy::tree::BinaryTree;
 
 /// Match positions for highlighting
 #[derive(Debug, Clone)]
@@ -13,8 +10,6 @@ pub struct MatchPositions {
 /// Async fuzzy finder with streaming capabilities
 pub struct FuzzyFinder {
     pub(crate) stream: ItemStream,
-    pub(crate) lsh_index: LSHIndex,
-    pub(crate) tree: BinaryTree,
     pub(crate) query: String,
     pub(crate) filtered_items: Vec<String>,
     pub(crate) match_positions: Vec<MatchPositions>,
@@ -28,12 +23,8 @@ impl FuzzyFinder {
     /// Create a new async fuzzy finder (empty)
     pub fn new(multi_select: bool) -> Self {
         let stream = ItemStream::new();
-        let lsh_index = LSHIndex::new(5);
-        let tree = BinaryTree::new();
         Self {
             stream,
-            lsh_index,
-            tree,
             query: String::new(),
             filtered_items: Vec::new(),
             match_positions: Vec::new(),
@@ -47,10 +38,6 @@ impl FuzzyFinder {
     /// Async constructor: create and add initial items
     pub async fn with_items_async(items: Vec<String>, multi_select: bool) -> Self {
         let mut finder = Self::new(multi_select);
-        for item in &items {
-            finder.lsh_index.insert(item.clone());
-            finder.tree.insert(item.clone());
-        }
         finder.stream.add_items(items).await;
         finder.filtered_items = finder.stream.get_all_items();
         finder
@@ -67,12 +54,19 @@ impl FuzzyFinder {
             self.calculate_match_positions();
         } else {
             let query_lower = self.query.to_lowercase();
+            let all_items = self.stream.get_all_items();
 
-            // Use tree for efficient search
-            let mut results = self.tree.search(&query_lower);
+            // Filter items that match the query
+            let mut results: Vec<String> = all_items
+                .into_iter()
+                .filter(|item| {
+                    let item_lower = item.to_lowercase();
+                    self.fuzzy_match(&item_lower, &query_lower)
+                })
+                .collect();
 
-            // Sort results using quicksort with enhanced scoring
-            quicksort(&mut results, &|a, b| {
+            // Sort results using standard library sort with enhanced scoring
+            results.sort_unstable_by(|a, b| {
                 let a_score = self.calculate_enhanced_score(a, &query_lower);
                 let b_score = self.calculate_enhanced_score(b, &query_lower);
                 b_score
@@ -95,6 +89,32 @@ impl FuzzyFinder {
                 self.filtered_items.len() - 1
             };
         }
+    }
+
+    /// Simple fuzzy match check
+    fn fuzzy_match(&self, item: &str, query: &str) -> bool {
+        if query.is_empty() {
+            return true;
+        }
+
+        if item.contains(query) {
+            return true;
+        }
+
+        let mut query_chars = query.chars().peekable();
+        let mut item_chars = item.chars();
+
+        while let Some(query_char) = query_chars.peek() {
+            if let Some(item_char) = item_chars.next() {
+                if item_char == *query_char {
+                    query_chars.next();
+                }
+            } else {
+                return false;
+            }
+        }
+
+        query_chars.peek().is_none()
     }
 
     /// Calculate match positions for highlighting
@@ -138,10 +158,6 @@ impl FuzzyFinder {
 
     /// Add new items asynchronously
     pub async fn add_items(&mut self, new_items: Vec<String>) {
-        for item in new_items.iter() {
-            self.lsh_index.insert(item.clone());
-            self.tree.insert(item.clone());
-        }
         self.stream.add_items(new_items).await;
         self.update_filter().await;
     }
@@ -273,16 +289,6 @@ impl FuzzyFinder {
     /// Get current query
     pub fn get_query(&self) -> &str {
         &self.query
-    }
-
-    /// Get tree size for performance monitoring
-    pub fn get_tree_size(&self) -> usize {
-        self.tree.size()
-    }
-
-    /// Get tree height for performance monitoring
-    pub fn get_tree_height(&self) -> usize {
-        self.tree.height()
     }
 
     /// Check if multi-select mode is enabled

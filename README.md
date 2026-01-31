@@ -45,13 +45,30 @@ ff items.txt --height-percentage 50
 ### Library Usage
 
 ```rust
-use ff::FuzzyFinder;
+use ff::FuzzyFinderSession;
+use tokio;
 
-let items = vec!["apple".to_string(), "banana".to_string(), "cherry".to_string()];
-let mut finder = FuzzyFinder::new(items, false);
-finder.query = "app".to_string();
-finder.update_filter();
-assert_eq!(finder.filtered_items, vec!["apple".to_string()]);
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    // Start the session
+    let (session, tui_future) = FuzzyFinderSession::new(true);
+
+    // Spawn the TUI runner
+    let runner = tokio::spawn(tui_future);
+
+    // Push items asynchronously
+    session.add("apple").await?;
+    session.add("banana").await?;
+    session.add_batch(vec!["cherry", "date"]).await?;
+
+    // Wait for the user to make a selection
+    // Note: The runner returns a Result<Result<Vec<String>, Error>, JoinError>
+    // The first ? handles the JoinError, the second ? handles the TUI Error
+    let result = runner.await??;
+    
+    println!("Selected: {:?}", result);
+    Ok(())
+}
 ```
 
 ## TUI Controls

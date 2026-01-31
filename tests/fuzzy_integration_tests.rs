@@ -424,16 +424,6 @@ async fn test_multi_select_repeated_toggles() {
 }
 
 #[tokio::test]
-async fn test_tree_performance_metrics() {
-    let items: Vec<String> = (0..100).map(|i| format!("item_{}", i)).collect();
-    let finder = FuzzyFinder::with_items_async(items, false).await;
-
-    // Test tree size and height
-    assert_eq!(finder.get_tree_size(), 100);
-    assert!(finder.get_tree_height() > 0);
-}
-
-#[tokio::test]
 async fn test_match_positions() {
     let mut finder =
         FuzzyFinder::with_items_async(vec!["apple".to_string(), "banana".to_string()], false).await;

@@ -32,6 +32,8 @@ pub mod fuzzy;
 pub mod input;
 pub mod tui;
 
+use tokio::sync::mpsc;
+
 // === Public API Exports ===
 
 /// Async fuzzy finder with streaming capabilities, LSH, and quicksort.
@@ -95,6 +97,85 @@ pub use tui::create_items_channel;
 /// let config = TuiConfig::with_height(10);
 /// ```
 pub use tui::TuiConfig;
+
+/// A session handle for the fuzzy finder, allowing asynchronous item ingestion.
+///
+/// This struct provides a high-level interface to the fuzzy finder TUI,
+/// allowing you to push items asynchronously while the TUI is running.
+///
+/// # Example
+/// ```no_run
+/// use ff::FuzzyFinderSession;
+/// use tokio;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///     // Start the session
+///     let (session, tui_future) = FuzzyFinderSession::new(true);
+///
+///     // Spawn the TUI runner
+///     let runner = tokio::spawn(tui_future);
+///
+///     // Push items asynchronously
+///     session.add("apple").await?;
+///     session.add("banana").await?;
+///
+///     // Wait for result
+///     let result = runner.await??;
+///     Ok(())
+/// }
+/// ```
+pub struct FuzzyFinderSession {
+    sender: mpsc::Sender<String>,
+}
+
+impl FuzzyFinderSession {
+    /// Start a new fuzzy finder session with default configuration.
+    ///
+    /// Returns a tuple containing:
+    /// 1. The session handle (for adding items)
+    /// 2. A future that runs the TUI (must be awaited or spawned)
+    pub fn new(
+        multi_select: bool,
+    ) -> (
+        Self,
+        impl std::future::Future<Output = Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>>>,
+    ) {
+        Self::with_config(multi_select, TuiConfig::default())
+    }
+
+    /// Start a new session with custom configuration.
+    pub fn with_config(
+        multi_select: bool,
+        config: TuiConfig,
+    ) -> (
+        Self,
+        impl std::future::Future<Output = Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>>>,
+    ) {
+        let (sender, receiver) = tui::create_items_channel();
+        (
+            Self { sender },
+            tui::run_tui_with_config(receiver, multi_select, config),
+        )
+    }
+
+    /// Add a single item to the finder.
+    pub async fn add(&self, item: impl Into<String>) -> Result<(), mpsc::error::SendError<String>> {
+        self.sender.send(item.into()).await
+    }
+
+    /// Add multiple items to the finder.
+    pub async fn add_batch<I>(&self, items: I) -> Result<(), mpsc::error::SendError<String>>
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+    {
+        for item in items {
+            self.sender.send(item.into()).await?;
+        }
+        Ok(())
+    }
+}
 
 // === Public Functions ===
 
