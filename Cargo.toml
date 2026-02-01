@@ -1,6 +1,6 @@
 [package]
 name = "ff"
-version = "1.0.6"
+version = "1.0.8"
 edition = "2021"
 description = "small simple not so percise finder"
 authors = ["jacbart"]
@@ -12,7 +12,16 @@ build = "build.rs"
 
 [dependencies]
 crossterm = "0.29"
-tokio = { version = "1.0", features = ["rt", "macros", "sync", "time", "fs", "io-util", "net", "rt-multi-thread"] }
+tokio = { version = "1.0", features = [
+  "rt",
+  "macros",
+  "sync",
+  "time",
+  "fs",
+  "io-util",
+  "net",
+  "rt-multi-thread",
+] }
 futures = "0.3"
 
 [dev-dependencies]
