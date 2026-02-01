@@ -98,6 +98,55 @@ pub use tui::create_items_channel;
 /// ```
 pub use tui::TuiConfig;
 
+/// Per-item indicator that can be displayed alongside items.
+///
+/// # Example
+/// ```no_run
+/// use ff::ItemIndicator;
+/// let indicator = ItemIndicator::Spinner;
+/// let success = ItemIndicator::Success;
+/// let custom = ItemIndicator::Text("*".to_string());
+/// ```
+pub use tui::ItemIndicator;
+
+/// Global status indicator for the TUI prompt line.
+///
+/// # Example
+/// ```no_run
+/// use ff::GlobalStatus;
+/// let loading = GlobalStatus::Loading(Some("Searching...".to_string()));
+/// let ready = GlobalStatus::Ready(Some("Done".to_string()));
+/// ```
+pub use tui::GlobalStatus;
+
+/// Commands that can be sent to update the TUI state dynamically.
+///
+/// # Example
+/// ```no_run
+/// use ff::{TuiCommand, ItemIndicator};
+/// let cmd = TuiCommand::AddItem("item".to_string());
+/// let cmd_with_indicator = TuiCommand::AddItemWithIndicator("item".to_string(), ItemIndicator::Spinner);
+/// let update = TuiCommand::UpdateIndicator("item".to_string(), ItemIndicator::Success);
+/// ```
+pub use tui::TuiCommand;
+
+/// Create an mpsc channel for sending commands (items with indicators) to the TUI.
+pub use tui::create_command_channel;
+
+/// Run an interactive TUI with command channel support for per-item indicators.
+///
+/// This is the extended version that supports dynamic per-item indicators.
+///
+/// # Arguments
+/// - `command_receiver`: The mpsc receiver for TuiCommand messages
+/// - `multi_select`: If `true`, allows selecting multiple items
+/// - `config`: TUI configuration specifying height and display mode
+///
+/// # Returns
+/// - `Ok(selected_items)`: The list of selected items (empty if none selected)
+/// - `Err(e)`: An error occurred during TUI operation
+pub use tui::run_tui_with_indicators;
+
 /// A session handle for the fuzzy finder, allowing asynchronous item ingestion.
 ///
 /// This struct provides a high-level interface to the fuzzy finder TUI,
@@ -172,6 +221,133 @@ impl FuzzyFinderSession {
     {
         for item in items {
             self.sender.send(item.into()).await?;
+        }
+        Ok(())
+    }
+}
+
+/// A session handle for the fuzzy finder with per-item indicator support.
+///
+/// This struct provides a high-level interface to the fuzzy finder TUI,
+/// allowing you to push items with dynamic indicators.
+///
+/// # Example
+/// ```no_run
+/// use ff::{FuzzyFinderWithIndicators, ItemIndicator};
+/// use tokio;
+///
+/// #[tokio::main]
+/// async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+///     // Start the session
+///     let (session, tui_future) = FuzzyFinderWithIndicators::new(true);
+///
+///     // Spawn the TUI runner
+///     let runner = tokio::spawn(tui_future);
+///
+///     // Add items with indicators
+///     session.add_with_indicator("task1", ItemIndicator::Spinner).await?;
+///     session.add("task2").await?;
+///     
+///     // Update indicator later
+///     session.set_indicator("task1", ItemIndicator::Success).await?;
+///
+///     // Wait for result
+///     let result = runner.await??;
+///     Ok(())
+/// }
+/// ```
+pub struct FuzzyFinderWithIndicators {
+    sender: mpsc::Sender<TuiCommand>,
+}
+
+impl FuzzyFinderWithIndicators {
+    /// Start a new fuzzy finder session with indicator support.
+    ///
+    /// Returns a tuple containing:
+    /// 1. The session handle (for adding items and updating indicators)
+    /// 2. A future that runs the TUI (must be awaited or spawned)
+    pub fn new(
+        multi_select: bool,
+    ) -> (
+        Self,
+        impl std::future::Future<Output = Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>>>,
+    ) {
+        Self::with_config(multi_select, TuiConfig::default())
+    }
+
+    /// Start a new session with custom configuration.
+    pub fn with_config(
+        multi_select: bool,
+        config: TuiConfig,
+    ) -> (
+        Self,
+        impl std::future::Future<Output = Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>>>,
+    ) {
+        let (sender, receiver) = tui::create_command_channel();
+        (
+            Self { sender },
+            tui::run_tui_with_indicators(receiver, multi_select, config),
+        )
+    }
+
+    /// Add a single item to the finder (no indicator).
+    pub async fn add(
+        &self,
+        item: impl Into<String>,
+    ) -> Result<(), mpsc::error::SendError<TuiCommand>> {
+        self.sender.send(TuiCommand::AddItem(item.into())).await
+    }
+
+    /// Add a single item with an indicator.
+    pub async fn add_with_indicator(
+        &self,
+        item: impl Into<String>,
+        indicator: ItemIndicator,
+    ) -> Result<(), mpsc::error::SendError<TuiCommand>> {
+        self.sender
+            .send(TuiCommand::AddItemWithIndicator(item.into(), indicator))
+            .await
+    }
+
+    /// Update the indicator for an existing item.
+    pub async fn set_indicator(
+        &self,
+        item: impl Into<String>,
+        indicator: ItemIndicator,
+    ) -> Result<(), mpsc::error::SendError<TuiCommand>> {
+        self.sender
+            .send(TuiCommand::UpdateIndicator(item.into(), indicator))
+            .await
+    }
+
+    /// Clear the indicator for an item.
+    pub async fn clear_indicator(
+        &self,
+        item: impl Into<String>,
+    ) -> Result<(), mpsc::error::SendError<TuiCommand>> {
+        self.sender
+            .send(TuiCommand::UpdateIndicator(item.into(), ItemIndicator::None))
+            .await
+    }
+
+    /// Set the global status indicator.
+    pub async fn set_global_status(
+        &self,
+        status: GlobalStatus,
+    ) -> Result<(), mpsc::error::SendError<TuiCommand>> {
+        self.sender
+            .send(TuiCommand::SetGlobalStatus(status))
+            .await
+    }
+
+    /// Add multiple items to the finder.
+    pub async fn add_batch<I>(&self, items: I) -> Result<(), mpsc::error::SendError<TuiCommand>>
+    where
+        I: IntoIterator,
+        I::Item: Into<String>,
+    {
+        for item in items {
+            self.sender.send(TuiCommand::AddItem(item.into())).await?;
         }
         Ok(())
     }

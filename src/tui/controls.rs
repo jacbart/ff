@@ -42,6 +42,8 @@ pub fn handle_key_event(key_event: &KeyEvent, fuzzy_finder: &mut FuzzyFinder) ->
         KeyCode::Tab => {
             if fuzzy_finder.is_multi_select() {
                 fuzzy_finder.toggle_selection();
+                // Move to next item without wrapping (stop at bottom)
+                fuzzy_finder.move_cursor_clamped(1);
             }
             Action::Continue
         }

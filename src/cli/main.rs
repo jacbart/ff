@@ -199,8 +199,8 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                 let (sender, receiver) = create_items_channel();
 
                 // Spawn task to send items to the channel
+                // Move sender directly into the task (don't clone) so channel closes when done
                 let items_clone = items.clone();
-                let sender_clone = sender.clone();
                 tokio::spawn(async move {
                     if items_clone.len() == 1 {
                         let item = &items_clone[0];
@@ -208,23 +208,22 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                             || item.starts_with("http://")
                             || item.starts_with("https://")
                         {
-                            let _ = send_input_to_channel(item, sender_clone).await;
+                            let _ = send_input_to_channel(item, sender).await;
                         } else if let Some(dir_path) = item.strip_prefix("dir:") {
                             let _ =
-                                send_input_to_channel(&format!("dir:{}", dir_path), sender_clone)
-                                    .await;
+                                send_input_to_channel(&format!("dir:{}", dir_path), sender).await;
                         } else if looks_like_file_path(item) {
-                            let _ = send_input_to_channel(item, sender_clone).await;
+                            let _ = send_input_to_channel(item, sender).await;
                         } else {
                             // Direct items
                             for direct_item in items_clone {
-                                let _ = sender_clone.send(direct_item).await;
+                                let _ = sender.send(direct_item).await;
                             }
                         }
                     } else {
                         // Multiple direct items
                         for direct_item in items_clone {
-                            let _ = sender_clone.send(direct_item).await;
+                            let _ = sender.send(direct_item).await;
                         }
                     }
                     // Sender will be dropped automatically when the task ends
@@ -235,6 +234,9 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                     height,
                     height_percentage,
                     show_help_text,
+                    show_loading_indicator: true,
+                    loading_message: None,
+                    ready_message: None,
                 };
                 let selected = run_tui_with_config(receiver, multi_select, config)
                     .await

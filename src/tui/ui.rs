@@ -12,8 +12,59 @@ use crossterm::{
 use std::{
     io::{self, Write},
     mem,
+    time::Instant,
 };
 use tokio::sync::mpsc;
+
+/// Built-in spinner frames (Braille dots pattern)
+const SPINNER_FRAMES: &[char] = &['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
+
+/// Global status indicator state
+#[derive(Debug, Clone, Default)]
+pub enum GlobalStatus {
+    /// Show a spinning indicator with optional message
+    Loading(Option<String>),
+    /// Show a static message (e.g., "Done", "Ready")
+    Ready(Option<String>),
+    /// Custom static text
+    Custom(String),
+    /// No indicator shown
+    #[default]
+    Hidden,
+}
+
+/// Per-item indicator that can be displayed alongside items
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum ItemIndicator {
+    /// Spinning indicator (animated)
+    Spinner,
+    /// Static text indicator
+    Text(String),
+    /// Colored text indicator
+    ColoredText(String, Color),
+    /// Success indicator (checkmark)
+    Success,
+    /// Error indicator (x mark)
+    Error,
+    /// Warning indicator
+    Warning,
+    /// No indicator
+    #[default]
+    None,
+}
+
+/// Commands that can be sent to update the TUI state
+#[derive(Debug, Clone)]
+pub enum TuiCommand {
+    /// Add a new item
+    AddItem(String),
+    /// Add a new item with an indicator
+    AddItemWithIndicator(String, ItemIndicator),
+    /// Update indicator for an existing item
+    UpdateIndicator(String, ItemIndicator),
+    /// Set global status
+    SetGlobalStatus(GlobalStatus),
+}
 
 /// Configuration for TUI display mode and height
 #[derive(Debug, Clone)]
@@ -26,6 +77,12 @@ pub struct TuiConfig {
     pub height_percentage: Option<f32>,
     /// Whether to show help/instructions text at the bottom
     pub show_help_text: bool,
+    /// Whether to show a loading spinner while items are being received
+    pub show_loading_indicator: bool,
+    /// Custom loading message (shown next to spinner)
+    pub loading_message: Option<String>,
+    /// Custom ready message (shown when loading is complete)
+    pub ready_message: Option<String>,
 }
 
 impl Default for TuiConfig {
@@ -35,6 +92,9 @@ impl Default for TuiConfig {
             height: None,
             height_percentage: None,
             show_help_text: true,
+            show_loading_indicator: true,
+            loading_message: None,
+            ready_message: None,
         }
     }
 }
@@ -52,6 +112,9 @@ impl TuiConfig {
             height: Some(height),
             height_percentage: None,
             show_help_text: true,
+            show_loading_indicator: true,
+            loading_message: None,
+            ready_message: None,
         }
     }
 
@@ -62,6 +125,9 @@ impl TuiConfig {
             height: None,
             height_percentage: Some(percentage),
             show_help_text: true,
+            show_loading_indicator: true,
+            loading_message: None,
+            ready_message: None,
         }
     }
 
@@ -72,6 +138,9 @@ impl TuiConfig {
             height: None,
             height_percentage: None,
             show_help_text: true,
+            show_loading_indicator: true,
+            loading_message: None,
+            ready_message: None,
         }
     }
 
@@ -152,6 +221,11 @@ async fn run_interactive_tui(
     let mut receiver_exhausted = false;
     let mut scroll_offset = 0;
 
+    // Spinner animation state
+    let mut spinner_frame: usize = 0;
+    let mut last_spinner_update = Instant::now();
+    let spinner_interval = std::time::Duration::from_millis(80);
+
     loop {
         // Process new items from mpsc receiver
         if !receiver_exhausted {
@@ -172,6 +246,7 @@ async fn run_interactive_tui(
                     }
                     Err(mpsc::error::TryRecvError::Disconnected) => {
                         receiver_exhausted = true;
+                        needs_redraw = true; // Redraw to show ready state
                         break;
                     }
                 }
@@ -228,7 +303,7 @@ async fn run_interactive_tui(
                 execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
             }
 
-            // Draw search prompt
+            // Draw search prompt with optional status indicator
             let prompt_y = if fullscreen { 0 } else { original_cursor.1 };
             execute!(
                 &mut stdout,
@@ -238,6 +313,38 @@ async fn run_interactive_tui(
                 ResetColor,
                 Print(&fuzzy_finder.get_query())
             )?;
+
+            // Draw status indicator (spinner or ready message)
+            if config.show_loading_indicator {
+                execute!(&mut stdout, Print(" "))?;
+                if !receiver_exhausted {
+                    // Show spinner
+                    let frame = SPINNER_FRAMES[spinner_frame % SPINNER_FRAMES.len()];
+                    execute!(
+                        &mut stdout,
+                        SetForegroundColor(Color::Yellow),
+                        Print(frame),
+                        ResetColor
+                    )?;
+                    if let Some(ref msg) = config.loading_message {
+                        execute!(
+                            &mut stdout,
+                            SetForegroundColor(Color::DarkGrey),
+                            Print(" "),
+                            Print(msg),
+                            ResetColor
+                        )?;
+                    }
+                } else if let Some(ref msg) = config.ready_message {
+                    // Show ready message
+                    execute!(
+                        &mut stdout,
+                        SetForegroundColor(Color::Green),
+                        Print(msg),
+                        ResetColor
+                    )?;
+                }
+            }
 
             // Draw items
             if tui_height >= 2 && available_height > 0 {
@@ -327,6 +434,16 @@ async fn run_interactive_tui(
                 }
             }
         }
+
+        // Update spinner animation if still loading
+        if config.show_loading_indicator
+            && !receiver_exhausted
+            && last_spinner_update.elapsed() >= spinner_interval
+        {
+            spinner_frame = (spinner_frame + 1) % SPINNER_FRAMES.len();
+            last_spinner_update = Instant::now();
+            needs_redraw = true;
+        }
     }
 
     // Restore terminal
@@ -365,6 +482,492 @@ pub fn create_items_channel() -> (mpsc::Sender<String>, mpsc::Receiver<String>) 
     mpsc::channel(1000) // Buffer size of 1000 items
 }
 
+/// Create an mpsc channel for sending commands (items with indicators) to the TUI
+pub fn create_command_channel() -> (mpsc::Sender<TuiCommand>, mpsc::Receiver<TuiCommand>) {
+    mpsc::channel(1000) // Buffer size of 1000 commands
+}
+
+/// Run an async interactive TUI with command channel support for per-item indicators
+pub async fn run_tui_with_indicators(
+    command_receiver: mpsc::Receiver<TuiCommand>,
+    multi_select: bool,
+    config: TuiConfig,
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    run_interactive_tui_with_indicators(command_receiver, multi_select, config).await
+}
+
+/// Run the async interactive TUI with command channel support
+async fn run_interactive_tui_with_indicators(
+    mut command_receiver: mpsc::Receiver<TuiCommand>,
+    multi_select: bool,
+    config: TuiConfig,
+) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let mut fuzzy_finder = FuzzyFinder::new(multi_select);
+    let mut stdout = io::stdout();
+
+    // Per-item indicators storage (keyed by item text)
+    let mut item_indicators: std::collections::HashMap<String, ItemIndicator> =
+        std::collections::HashMap::new();
+    let mut global_status = GlobalStatus::Loading(None);
+
+    // Enable raw mode and hide cursor
+    enable_raw_mode()?;
+    execute!(stdout, Hide)?;
+
+    let fullscreen = config.fullscreen;
+    let mut original_cursor = position()?;
+    let (_term_width, term_height) = size()?;
+    let tui_height = config.calculate_height(term_height);
+
+    if fullscreen {
+        execute!(
+            &mut stdout,
+            crossterm::terminal::EnterAlternateScreen,
+            Clear(ClearType::All)
+        )?;
+    } else {
+        // If not enough space below, scroll the terminal down
+        if original_cursor.1 + tui_height > term_height {
+            let needed = (original_cursor.1 + tui_height).saturating_sub(term_height);
+            for _ in 0..needed {
+                writeln!(stdout)?;
+            }
+            stdout.flush()?;
+            original_cursor = (0, term_height.saturating_sub(tui_height));
+        }
+        execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
+    }
+
+    let mut selected_items = Vec::new();
+    let mut needs_redraw = true;
+    let mut items_buffer = Vec::new();
+    let mut receiver_exhausted = false;
+    let mut scroll_offset = 0;
+
+    // Spinner animation state
+    let mut spinner_frame: usize = 0;
+    let mut last_spinner_update = Instant::now();
+    let spinner_interval = std::time::Duration::from_millis(80);
+
+    loop {
+        // Process commands from channel
+        if !receiver_exhausted {
+            let mut batch_count = 0;
+            const MAX_BATCH_SIZE: usize = 1000;
+
+            loop {
+                match command_receiver.try_recv() {
+                    Ok(command) => {
+                        match command {
+                            TuiCommand::AddItem(item) => {
+                                items_buffer.push(item);
+                            }
+                            TuiCommand::AddItemWithIndicator(item, indicator) => {
+                                if indicator != ItemIndicator::None {
+                                    item_indicators.insert(item.clone(), indicator);
+                                }
+                                items_buffer.push(item);
+                            }
+                            TuiCommand::UpdateIndicator(item, indicator) => {
+                                if indicator == ItemIndicator::None {
+                                    item_indicators.remove(&item);
+                                } else {
+                                    item_indicators.insert(item, indicator);
+                                }
+                                needs_redraw = true;
+                            }
+                            TuiCommand::SetGlobalStatus(status) => {
+                                global_status = status;
+                                needs_redraw = true;
+                            }
+                        }
+                        batch_count += 1;
+                        if batch_count >= MAX_BATCH_SIZE {
+                            break;
+                        }
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        break;
+                    }
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        receiver_exhausted = true;
+                        global_status = GlobalStatus::Ready(config.ready_message.clone());
+                        needs_redraw = true;
+                        break;
+                    }
+                }
+            }
+
+            if !items_buffer.is_empty() {
+                fuzzy_finder.add_items(mem::take(&mut items_buffer)).await;
+                needs_redraw = true;
+            }
+        }
+
+        let (_term_width, term_height) = size()?;
+        let tui_height = config.calculate_height(term_height);
+        let available_height = if tui_height > 2 {
+            if config.show_help_text {
+                tui_height - 2
+            } else {
+                tui_height - 1
+            }
+        } else if tui_height == 2 {
+            1
+        } else {
+            0
+        };
+
+        // Update scroll offset to keep cursor in view
+        let cursor_pos = fuzzy_finder.get_cursor_position();
+        if cursor_pos < scroll_offset {
+            scroll_offset = cursor_pos;
+        } else if cursor_pos >= scroll_offset + available_height as usize {
+            scroll_offset = cursor_pos - available_height as usize + 1;
+        }
+
+        let total_items = fuzzy_finder.get_filtered_items().len();
+        if scroll_offset > total_items {
+            scroll_offset = total_items.saturating_sub(available_height as usize);
+        }
+
+        if needs_redraw {
+            if fullscreen {
+                execute!(&mut stdout, MoveTo(0, 0), Clear(ClearType::All))?;
+            } else {
+                for i in 0..tui_height.max(2) {
+                    execute!(
+                        &mut stdout,
+                        MoveTo(0, original_cursor.1 + i),
+                        Clear(ClearType::CurrentLine)
+                    )?;
+                }
+                execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
+            }
+
+            // Draw search prompt with global status indicator
+            let prompt_y = if fullscreen { 0 } else { original_cursor.1 };
+            execute!(
+                &mut stdout,
+                MoveTo(0, prompt_y),
+                SetForegroundColor(Color::Cyan),
+                Print("> "),
+                ResetColor,
+                Print(&fuzzy_finder.get_query())
+            )?;
+
+            // Draw global status indicator
+            if config.show_loading_indicator {
+                execute!(&mut stdout, Print(" "))?;
+                match &global_status {
+                    GlobalStatus::Loading(msg) => {
+                        let frame = SPINNER_FRAMES[spinner_frame % SPINNER_FRAMES.len()];
+                        execute!(
+                            &mut stdout,
+                            SetForegroundColor(Color::Yellow),
+                            Print(frame),
+                            ResetColor
+                        )?;
+                        if let Some(ref m) = msg {
+                            execute!(
+                                &mut stdout,
+                                SetForegroundColor(Color::DarkGrey),
+                                Print(" "),
+                                Print(m),
+                                ResetColor
+                            )?;
+                        } else if let Some(ref m) = config.loading_message {
+                            execute!(
+                                &mut stdout,
+                                SetForegroundColor(Color::DarkGrey),
+                                Print(" "),
+                                Print(m),
+                                ResetColor
+                            )?;
+                        }
+                    }
+                    GlobalStatus::Ready(msg) => {
+                        if let Some(ref m) = msg {
+                            execute!(
+                                &mut stdout,
+                                SetForegroundColor(Color::Green),
+                                Print(m),
+                                ResetColor
+                            )?;
+                        }
+                    }
+                    GlobalStatus::Custom(text) => {
+                        execute!(&mut stdout, Print(text))?;
+                    }
+                    GlobalStatus::Hidden => {}
+                }
+            }
+
+            // Draw items with per-item indicators
+            if tui_height >= 2 && available_height > 0 {
+                let filtered_items = fuzzy_finder.get_filtered_items();
+                let visible_items = filtered_items
+                    .iter()
+                    .skip(scroll_offset)
+                    .take(available_height as usize);
+
+                for (i, item) in visible_items.enumerate() {
+                    let absolute_index = scroll_offset + i;
+                    let y_pos = if fullscreen {
+                        (i + 1) as u16
+                    } else {
+                        original_cursor.1 + 1 + i as u16
+                    };
+                    execute!(&mut stdout, MoveTo(0, y_pos))?;
+
+                    let is_cursor = absolute_index == fuzzy_finder.get_cursor_position();
+                    let is_selected = fuzzy_finder.is_selected(item);
+                    let indicator = item_indicators.get(item);
+
+                    draw_item_with_indicator(
+                        &mut stdout,
+                        item,
+                        is_cursor,
+                        is_selected,
+                        fuzzy_finder.get_match_positions(absolute_index),
+                        indicator,
+                        spinner_frame,
+                    )?;
+                    execute!(&mut stdout, ResetColor)?;
+                }
+            }
+
+            if tui_height < 2 {
+                let warning_y = if fullscreen { 1 } else { original_cursor.1 + 1 };
+                execute!(
+                    &mut stdout,
+                    MoveTo(0, warning_y),
+                    SetForegroundColor(Color::Yellow),
+                    Print("Terminal too small. Please resize to continue..."),
+                    ResetColor
+                )?;
+            }
+
+            if config.show_help_text {
+                let instructions_y = if fullscreen {
+                    tui_height.saturating_sub(1)
+                } else {
+                    original_cursor.1 + tui_height.saturating_sub(1)
+                };
+                execute!(
+                    &mut stdout,
+                    MoveTo(0, instructions_y),
+                    SetForegroundColor(Color::DarkGrey)
+                )?;
+                if multi_select {
+                    execute!(
+                        &mut stdout,
+                        Print("Tab/Space: Toggle | Enter: Confirm | Esc/Ctrl+C/Ctrl+Q: Exit")
+                    )?;
+                } else {
+                    execute!(
+                        &mut stdout,
+                        Print("↑/↓: Navigate | Enter: Select | Esc/Ctrl+C/Ctrl+Q: Exit")
+                    )?;
+                }
+                execute!(&mut stdout, ResetColor)?;
+            }
+
+            stdout.flush()?;
+            needs_redraw = false;
+        }
+
+        // Handle input
+        if event::poll(std::time::Duration::from_millis(50))? {
+            if let Event::Key(key_event) = event::read()? {
+                match handle_async_key_event(&key_event, &mut fuzzy_finder).await {
+                    Action::Continue => {
+                        needs_redraw = true;
+                        continue;
+                    }
+                    Action::Exit => break,
+                    Action::Select(items) => {
+                        selected_items = items;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Update spinner animation
+        if last_spinner_update.elapsed() >= spinner_interval {
+            spinner_frame = (spinner_frame + 1) % SPINNER_FRAMES.len();
+            last_spinner_update = Instant::now();
+            // Only redraw if there are any spinning indicators
+            let has_spinners = matches!(global_status, GlobalStatus::Loading(_))
+                || item_indicators
+                    .values()
+                    .any(|i| matches!(i, ItemIndicator::Spinner));
+            if has_spinners {
+                needs_redraw = true;
+            }
+        }
+    }
+
+    // Restore terminal
+    if fullscreen {
+        execute!(&mut stdout, crossterm::terminal::LeaveAlternateScreen)?;
+        execute!(&mut stdout, Show)?;
+    } else {
+        for i in 0..config.calculate_height(size()?.1) {
+            execute!(
+                &mut stdout,
+                MoveTo(0, original_cursor.1 + i),
+                Clear(ClearType::CurrentLine)
+            )?;
+        }
+        execute!(
+            &mut stdout,
+            MoveTo(original_cursor.0, original_cursor.1),
+            Show
+        )?;
+        stdout.flush()?;
+    }
+
+    disable_raw_mode()?;
+
+    if !selected_items.is_empty() {
+        execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
+    }
+
+    Ok(selected_items)
+}
+
+/// Draw an item with optional per-item indicator
+fn draw_item_with_indicator<W: Write>(
+    stdout: &mut W,
+    item: &str,
+    is_cursor: bool,
+    is_selected: bool,
+    match_positions: Option<&crate::fuzzy::finder::MatchPositions>,
+    indicator: Option<&ItemIndicator>,
+    spinner_frame: usize,
+) -> io::Result<()> {
+    // Set cursor highlighting
+    if is_cursor {
+        execute!(
+            stdout,
+            SetBackgroundColor(Color::DarkGrey),
+            SetForegroundColor(Color::Yellow),
+            SetAttribute(Attribute::Bold)
+        )?;
+    }
+
+    // Draw indicator prefix
+    match indicator {
+        Some(ItemIndicator::Spinner) => {
+            let frame = SPINNER_FRAMES[spinner_frame % SPINNER_FRAMES.len()];
+            if !is_cursor {
+                execute!(stdout, SetForegroundColor(Color::Yellow))?;
+            }
+            execute!(stdout, Print(frame), Print(" "))?;
+            if !is_cursor {
+                execute!(stdout, ResetColor)?;
+            }
+        }
+        Some(ItemIndicator::Text(text)) => {
+            execute!(stdout, Print(text), Print(" "))?;
+        }
+        Some(ItemIndicator::ColoredText(text, color)) => {
+            let saved_color = if is_cursor { Color::Yellow } else { Color::Reset };
+            execute!(stdout, SetForegroundColor(*color), Print(text), Print(" "))?;
+            if is_cursor {
+                execute!(stdout, SetForegroundColor(saved_color))?;
+            } else {
+                execute!(stdout, ResetColor)?;
+            }
+        }
+        Some(ItemIndicator::Success) => {
+            if !is_cursor {
+                execute!(stdout, SetForegroundColor(Color::Green))?;
+            }
+            execute!(stdout, Print("✓ "))?;
+            if !is_cursor {
+                execute!(stdout, ResetColor)?;
+            }
+        }
+        Some(ItemIndicator::Error) => {
+            if !is_cursor {
+                execute!(stdout, SetForegroundColor(Color::Red))?;
+            }
+            execute!(stdout, Print("✗ "))?;
+            if !is_cursor {
+                execute!(stdout, ResetColor)?;
+            }
+        }
+        Some(ItemIndicator::Warning) => {
+            if !is_cursor {
+                execute!(stdout, SetForegroundColor(Color::Yellow))?;
+            }
+            execute!(stdout, Print("⚠ "))?;
+            if !is_cursor {
+                execute!(stdout, ResetColor)?;
+            }
+        }
+        Some(ItemIndicator::None) | None => {
+            // Selection indicator takes precedence when no other indicator
+            if is_selected {
+                execute!(stdout, SetForegroundColor(Color::Green), Print("✓ "))?;
+                if is_cursor {
+                    execute!(stdout, SetForegroundColor(Color::Yellow))?;
+                } else {
+                    execute!(stdout, ResetColor)?;
+                }
+            } else {
+                execute!(stdout, Print("  "))?;
+            }
+        }
+    }
+
+    // Draw item text with match highlighting
+    if let Some(matches) = match_positions {
+        for (i, ch) in item.chars().enumerate() {
+            if matches.positions.contains(&i) {
+                if is_cursor {
+                    execute!(
+                        stdout,
+                        SetForegroundColor(Color::White),
+                        SetAttribute(Attribute::Bold),
+                        SetAttribute(Attribute::Underlined)
+                    )?;
+                } else {
+                    execute!(
+                        stdout,
+                        SetAttribute(Attribute::Bold),
+                        SetAttribute(Attribute::Underlined)
+                    )?;
+                }
+                execute!(stdout, Print(ch))?;
+                if is_cursor {
+                    execute!(
+                        stdout,
+                        SetForegroundColor(Color::Yellow),
+                        SetAttribute(Attribute::NoUnderline)
+                    )?;
+                } else {
+                    execute!(
+                        stdout,
+                        SetAttribute(Attribute::NoUnderline),
+                        SetAttribute(Attribute::NormalIntensity)
+                    )?;
+                }
+            } else {
+                execute!(stdout, Print(ch))?;
+            }
+        }
+    } else {
+        execute!(stdout, Print(item))?;
+    }
+
+    execute!(stdout, ResetColor)?;
+    Ok(())
+}
+
 /// Handle key events in async mode
 async fn handle_async_key_event(
     key_event: &crossterm::event::KeyEvent,
@@ -401,6 +1004,8 @@ async fn handle_async_key_event(
         KeyCode::Tab => {
             if fuzzy_finder.is_multi_select() {
                 fuzzy_finder.toggle_selection();
+                // Move to next item without wrapping (stop at bottom)
+                fuzzy_finder.move_cursor_clamped(1);
             }
             Action::Continue
         }
@@ -552,6 +1157,9 @@ mod tests {
         assert!(config.height.is_none());
         assert!(config.height_percentage.is_none());
         assert!(config.show_help_text);
+        assert!(config.show_loading_indicator);
+        assert!(config.loading_message.is_none());
+        assert!(config.ready_message.is_none());
     }
 
     #[test]
@@ -560,6 +1168,7 @@ mod tests {
         assert!(!config.fullscreen);
         assert_eq!(config.height, Some(10));
         assert!(config.height_percentage.is_none());
+        assert!(config.show_loading_indicator);
     }
 
     #[test]
@@ -568,12 +1177,14 @@ mod tests {
         assert!(!config.fullscreen);
         assert!(config.height.is_none());
         assert_eq!(config.height_percentage, Some(50.0));
+        assert!(config.show_loading_indicator);
     }
 
     #[test]
     fn test_tui_config_fullscreen() {
         let config = TuiConfig::fullscreen();
         assert!(config.fullscreen);
+        assert!(config.show_loading_indicator);
         assert!(config.height.is_none());
         assert!(config.height_percentage.is_none());
     }
@@ -675,5 +1286,157 @@ mod tests {
         let action = handle_async_key_event(&key_event, &mut finder).await;
 
         assert_eq!(action, crate::tui::controls::Action::Exit);
+    }
+
+    #[test]
+    fn test_item_indicator_default() {
+        let indicator = ItemIndicator::default();
+        assert_eq!(indicator, ItemIndicator::None);
+    }
+
+    #[test]
+    fn test_item_indicator_variants() {
+        let spinner = ItemIndicator::Spinner;
+        let text = ItemIndicator::Text("*".to_string());
+        let colored = ItemIndicator::ColoredText("!".to_string(), Color::Red);
+        let success = ItemIndicator::Success;
+        let error = ItemIndicator::Error;
+        let warning = ItemIndicator::Warning;
+        let none = ItemIndicator::None;
+
+        // Test that different variants are not equal
+        assert_ne!(spinner, text);
+        assert_ne!(text, colored);
+        assert_ne!(success, error);
+        assert_ne!(warning, none);
+    }
+
+    #[test]
+    fn test_global_status_default() {
+        let status = GlobalStatus::default();
+        assert!(matches!(status, GlobalStatus::Hidden));
+    }
+
+    #[tokio::test]
+    async fn test_create_command_channel() {
+        let (sender, mut receiver) = create_command_channel();
+
+        // Send some commands
+        sender
+            .send(TuiCommand::AddItem("item1".to_string()))
+            .await
+            .unwrap();
+        sender
+            .send(TuiCommand::AddItemWithIndicator(
+                "item2".to_string(),
+                ItemIndicator::Spinner,
+            ))
+            .await
+            .unwrap();
+        sender
+            .send(TuiCommand::UpdateIndicator(
+                "item1".to_string(),
+                ItemIndicator::Success,
+            ))
+            .await
+            .unwrap();
+        drop(sender);
+
+        // Collect commands
+        let mut commands = Vec::new();
+        while let Some(cmd) = receiver.recv().await {
+            commands.push(cmd);
+        }
+
+        assert_eq!(commands.len(), 3);
+        assert!(matches!(commands[0], TuiCommand::AddItem(_)));
+        assert!(matches!(commands[1], TuiCommand::AddItemWithIndicator(_, _)));
+        assert!(matches!(commands[2], TuiCommand::UpdateIndicator(_, _)));
+    }
+
+    #[test]
+    fn test_draw_item_with_spinner_indicator() {
+        let mut output = Vec::new();
+        draw_item_with_indicator(
+            &mut output,
+            "test",
+            false,
+            false,
+            None,
+            Some(&ItemIndicator::Spinner),
+            0,
+        )
+        .unwrap();
+        let output_str = String::from_utf8(output).unwrap();
+        // Should contain the first spinner frame
+        assert!(output_str.contains(SPINNER_FRAMES[0]));
+    }
+
+    #[test]
+    fn test_draw_item_with_success_indicator() {
+        let mut output = Vec::new();
+        draw_item_with_indicator(
+            &mut output,
+            "test",
+            false,
+            false,
+            None,
+            Some(&ItemIndicator::Success),
+            0,
+        )
+        .unwrap();
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("✓"));
+    }
+
+    #[test]
+    fn test_draw_item_with_error_indicator() {
+        let mut output = Vec::new();
+        draw_item_with_indicator(
+            &mut output,
+            "test",
+            false,
+            false,
+            None,
+            Some(&ItemIndicator::Error),
+            0,
+        )
+        .unwrap();
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("✗"));
+    }
+
+    #[test]
+    fn test_draw_item_with_warning_indicator() {
+        let mut output = Vec::new();
+        draw_item_with_indicator(
+            &mut output,
+            "test",
+            false,
+            false,
+            None,
+            Some(&ItemIndicator::Warning),
+            0,
+        )
+        .unwrap();
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("⚠"));
+    }
+
+    #[test]
+    fn test_draw_item_with_text_indicator() {
+        let mut output = Vec::new();
+        draw_item_with_indicator(
+            &mut output,
+            "test",
+            false,
+            false,
+            None,
+            Some(&ItemIndicator::Text("[*]".to_string())),
+            0,
+        )
+        .unwrap();
+        let output_str = String::from_utf8(output).unwrap();
+        assert!(output_str.contains("[*]"));
     }
 }

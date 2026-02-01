@@ -9,6 +9,8 @@ A high-performance fuzzy finder. **Fast, not precise** - designed for quick filt
 - **Multi-select support** for selecting multiple items
 - **TUI interface** with keyboard navigation
 - **Flexible input** - files, stdin, or direct items
+- **Loading indicator** - Animated spinner while items are being loaded
+- **Per-item indicators** - Dynamic status indicators for each item (library only)
 
 ## Installation
 
@@ -44,9 +46,10 @@ ff items.txt --height-percentage 50
 
 ### Library Usage
 
+#### Basic Session
+
 ```rust
 use ff::FuzzyFinderSession;
-use tokio;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -62,8 +65,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     session.add_batch(vec!["cherry", "date"]).await?;
 
     // Wait for the user to make a selection
-    // Note: The runner returns a Result<Result<Vec<String>, Error>, JoinError>
-    // The first ? handles the JoinError, the second ? handles the TUI Error
     let result = runner.await??;
     
     println!("Selected: {:?}", result);
@@ -71,14 +72,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 }
 ```
 
+#### With Per-Item Indicators
+
+For tasks that need status indicators on each item (e.g., showing progress):
+
+```rust
+use ff::{FuzzyFinderWithIndicators, ItemIndicator, GlobalStatus};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let (session, tui_future) = FuzzyFinderWithIndicators::new(true);
+    let runner = tokio::spawn(tui_future);
+
+    // Add items with spinner indicators
+    session.add_with_indicator("task1", ItemIndicator::Spinner).await?;
+    session.add_with_indicator("task2", ItemIndicator::Spinner).await?;
+    session.add("task3").await?;  // No indicator
+    
+    // Update indicators as tasks complete
+    session.set_indicator("task1", ItemIndicator::Success).await?;
+    session.set_indicator("task2", ItemIndicator::Error).await?;
+    
+    // Optionally set global status
+    session.set_global_status(GlobalStatus::Ready(Some("All done!".into()))).await?;
+
+    let result = runner.await??;
+    println!("Selected: {:?}", result);
+    Ok(())
+}
+```
+
+**Available indicators:**
+- `ItemIndicator::Spinner` - Animated spinner
+- `ItemIndicator::Success` - Green checkmark
+- `ItemIndicator::Error` - Red X
+- `ItemIndicator::Warning` - Yellow warning
+- `ItemIndicator::Text(String)` - Custom text
+- `ItemIndicator::ColoredText(String, Color)` - Custom colored text
+- `ItemIndicator::None` - No indicator
+
 ## TUI Controls
 
 - **Type to search** - Filter items in real-time
 - **↑/↓ arrows** - Navigate through results
 - **Enter** - Select item (single mode) or confirm selection (multi mode)
-- **Tab/Space** - Toggle selection (multi-select mode only)
+- **Tab** - Toggle selection and move to next item (multi-select mode)
+- **Space** - Toggle selection (multi-select mode)
 - **Esc** - Exit without selection
-- **Ctrl+Q** - Exit without selection
+- **Ctrl+Q/Ctrl+C** - Exit without selection
+
+## Configuration
+
+The `TuiConfig` struct allows customization:
+
+```rust
+use ff::{TuiConfig, FuzzyFinderSession};
+
+let config = TuiConfig {
+    fullscreen: false,
+    height: Some(10),
+    height_percentage: None,
+    show_help_text: true,
+    show_loading_indicator: true,
+    loading_message: Some("Loading...".into()),
+    ready_message: Some("Ready".into()),
+};
+
+let (session, tui_future) = FuzzyFinderSession::with_config(true, config);
+```
 
 ## Performance
 

@@ -218,7 +218,7 @@ impl FuzzyFinder {
         score
     }
 
-    /// Move cursor up or down
+    /// Move cursor up or down (wraps around)
     pub fn move_cursor(&mut self, direction: i32) {
         let len = self.filtered_items.len();
         if len == 0 {
@@ -244,6 +244,28 @@ impl FuzzyFinder {
         };
 
         self.cursor_position = wrapped_position as usize;
+    }
+
+    /// Move cursor up or down without wrapping (clamps to bounds)
+    /// Returns true if the cursor actually moved, false if it was already at the boundary
+    pub fn move_cursor_clamped(&mut self, direction: i32) -> bool {
+        let len = self.filtered_items.len();
+        if len == 0 {
+            return false;
+        }
+
+        let current_pos = self.cursor_position as i32;
+        let new_position = current_pos + direction;
+
+        // Clamp to valid range [0, len-1]
+        let clamped_position = new_position.max(0).min(len as i32 - 1) as usize;
+
+        if clamped_position != self.cursor_position {
+            self.cursor_position = clamped_position;
+            true
+        } else {
+            false
+        }
     }
 
     /// Toggle selection in multi-select mode
@@ -343,5 +365,42 @@ mod tests {
         finder.add_items(new_items).await;
         let all_items = finder.get_filtered_items();
         assert!(all_items.len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn test_move_cursor_clamped_does_not_wrap() {
+        let items = vec![
+            "apple".to_string(),
+            "banana".to_string(),
+            "cherry".to_string(),
+        ];
+        let mut finder = FuzzyFinder::with_items_async(items, false).await;
+
+        // Start at position 0
+        assert_eq!(finder.get_cursor_position(), 0);
+
+        // Move down should work
+        assert!(finder.move_cursor_clamped(1));
+        assert_eq!(finder.get_cursor_position(), 1);
+
+        // Move to end
+        assert!(finder.move_cursor_clamped(1));
+        assert_eq!(finder.get_cursor_position(), 2);
+
+        // Try to move past end - should not wrap, should return false
+        assert!(!finder.move_cursor_clamped(1));
+        assert_eq!(finder.get_cursor_position(), 2); // Still at 2
+
+        // Move back up
+        assert!(finder.move_cursor_clamped(-1));
+        assert_eq!(finder.get_cursor_position(), 1);
+
+        // Move to beginning
+        assert!(finder.move_cursor_clamped(-1));
+        assert_eq!(finder.get_cursor_position(), 0);
+
+        // Try to move past beginning - should not wrap, should return false
+        assert!(!finder.move_cursor_clamped(-1));
+        assert_eq!(finder.get_cursor_position(), 0); // Still at 0
     }
 }
