@@ -1,6 +1,6 @@
 [package]
 name = "ff"
-version = "1.0.9"
+version = "1.0.10"
 edition = "2021"
 description = "small simple not so percise finder"
 authors = ["jacbart"]
