@@ -1,8 +1,10 @@
-{ pkgs ? import <nixpkgs> {}
-, pname
-, rustVersion
-, version
-, ... }:
+{
+  pkgs ? import <nixpkgs> { },
+  pname,
+  rustVersion,
+  version,
+  ...
+}:
 
 pkgs.mkShell {
   name = "${pname}-${version}";
@@ -11,6 +13,7 @@ pkgs.mkShell {
     bacon
     lldb
     rust-analyzer
+    git-cliff
   ];
   RUST_LOG = "debug";
   RUST_BACKTRACE = 1;

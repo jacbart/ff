@@ -1025,7 +1025,15 @@ async fn handle_async_key_event(
                 Action::Continue
             }
         }
-        KeyCode::Esc => Action::Exit,
+        KeyCode::Esc => {
+            // Two-stage escape: first clears query, second exits
+            if fuzzy_finder.get_query().is_empty() {
+                Action::Exit
+            } else {
+                fuzzy_finder.set_query(String::new()).await;
+                Action::Continue
+            }
+        }
         _ => Action::Continue,
     }
 }
@@ -1447,6 +1455,94 @@ mod tests {
         let action = handle_async_key_event(&key_event, &mut finder).await;
 
         assert_eq!(action, crate::tui::controls::Action::Exit);
+    }
+
+    #[tokio::test]
+    async fn test_handle_async_key_event_escape_with_empty_query() {
+        use crate::fuzzy::FuzzyFinder;
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let items = vec!["apple".to_string(), "banana".to_string()];
+        let mut finder = FuzzyFinder::with_items_async(items, false).await;
+
+        // Query is empty, so Escape should exit
+        assert!(finder.get_query().is_empty());
+
+        let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let action = handle_async_key_event(&key_event, &mut finder).await;
+
+        assert_eq!(action, crate::tui::controls::Action::Exit);
+    }
+
+    #[tokio::test]
+    async fn test_handle_async_key_event_escape_with_query_clears_query() {
+        use crate::fuzzy::FuzzyFinder;
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let items = vec!["apple".to_string(), "banana".to_string()];
+        let mut finder = FuzzyFinder::with_items_async(items, false).await;
+
+        // Set a query first
+        finder.set_query("app".to_string()).await;
+        assert_eq!(finder.get_query(), "app");
+
+        // First Escape should clear the query, not exit
+        let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let action = handle_async_key_event(&key_event, &mut finder).await;
+
+        assert_eq!(action, crate::tui::controls::Action::Continue);
+        assert!(finder.get_query().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_handle_async_key_event_escape_twice_exits() {
+        use crate::fuzzy::FuzzyFinder;
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let items = vec!["apple".to_string(), "banana".to_string()];
+        let mut finder = FuzzyFinder::with_items_async(items, false).await;
+
+        // Set a query first
+        finder.set_query("app".to_string()).await;
+        assert_eq!(finder.get_query(), "app");
+
+        let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+
+        // First Escape: clears query
+        let action1 = handle_async_key_event(&key_event, &mut finder).await;
+        assert_eq!(action1, crate::tui::controls::Action::Continue);
+        assert!(finder.get_query().is_empty());
+
+        // Second Escape: exits
+        let action2 = handle_async_key_event(&key_event, &mut finder).await;
+        assert_eq!(action2, crate::tui::controls::Action::Exit);
+    }
+
+    #[tokio::test]
+    async fn test_handle_async_key_event_escape_preserves_selections() {
+        use crate::fuzzy::FuzzyFinder;
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let items = vec!["apple".to_string(), "banana".to_string()];
+        let mut finder = FuzzyFinder::with_items_async(items, true).await; // multi-select
+
+        // Set a query and make a selection
+        finder.set_query("a".to_string()).await;
+        finder.toggle_selection(); // Select first item
+
+        let selected_before = finder.get_selected_items();
+        assert!(!selected_before.is_empty());
+
+        // Escape to clear query
+        let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        let action = handle_async_key_event(&key_event, &mut finder).await;
+
+        assert_eq!(action, crate::tui::controls::Action::Continue);
+        assert!(finder.get_query().is_empty());
+
+        // Selections should still be there
+        let selected_after = finder.get_selected_items();
+        assert_eq!(selected_before, selected_after);
     }
 
     #[test]
