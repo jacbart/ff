@@ -6,6 +6,50 @@
 use crossterm::style::Color;
 use std::fmt::Write as FmtWrite;
 
+/// Style attributes for a cell or text span
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Style {
+    /// Foreground color (None = default/reset)
+    pub fg: Option<Color>,
+    /// Background color (None = default/reset)
+    pub bg: Option<Color>,
+    /// Whether the text is bold
+    pub bold: bool,
+    /// Whether the text is underlined
+    pub underline: bool,
+}
+
+impl Style {
+    /// Create a new style with default values
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Set foreground color
+    pub fn fg(mut self, color: Color) -> Self {
+        self.fg = Some(color);
+        self
+    }
+
+    /// Set background color
+    pub fn bg(mut self, color: Color) -> Self {
+        self.bg = Some(color);
+        self
+    }
+
+    /// Set bold
+    pub fn bold(mut self) -> Self {
+        self.bold = true;
+        self
+    }
+
+    /// Set underline
+    pub fn underline(mut self) -> Self {
+        self.underline = true;
+        self
+    }
+}
+
 /// A single cell in the screen buffer, representing one character position.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Cell {
@@ -127,6 +171,7 @@ impl ScreenBuffer {
 
     /// Put a string at the given position with styling.
     /// Returns the number of characters actually written.
+    #[allow(clippy::too_many_arguments)]
     pub fn put_str(
         &mut self,
         x: u16,
@@ -155,6 +200,7 @@ impl ScreenBuffer {
     }
 
     /// Put a single character at the given position with styling.
+    #[allow(clippy::too_many_arguments)]
     pub fn put_char(
         &mut self,
         x: u16,

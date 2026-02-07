@@ -1,10 +1,11 @@
+use crate::fuzzy::scoring;
 use crate::fuzzy::stream::ItemStream;
 
 /// Match positions for highlighting
 #[derive(Debug, Clone)]
 pub struct MatchPositions {
     pub positions: Vec<usize>,
-    pub score: f64,
+    pub score: i32,
 }
 
 /// Async fuzzy finder with streaming capabilities
@@ -16,7 +17,8 @@ pub struct FuzzyFinder {
     pub(crate) selected_items: std::collections::HashSet<String>,
     pub(crate) cursor_position: usize,
     pub(crate) multi_select: bool,
-    pub(crate) query_cache: std::collections::HashMap<String, Vec<String>>,
+    /// Cache stores (filtered_items, match_positions) for each query
+    pub(crate) query_cache: std::collections::HashMap<String, (Vec<String>, Vec<MatchPositions>)>,
 }
 
 impl FuzzyFinder {
@@ -47,38 +49,42 @@ impl FuzzyFinder {
     pub async fn update_filter(&mut self) {
         if self.query.is_empty() {
             self.filtered_items = self.stream.get_all_items();
-            self.match_positions.clear();
-        } else if let Some(cached_results) = self.query_cache.get(&self.query) {
-            self.filtered_items = cached_results.clone();
-            // Recalculate match positions for cached results
-            self.calculate_match_positions();
+            self.match_positions = self
+                .filtered_items
+                .iter()
+                .map(|_| MatchPositions {
+                    positions: Vec::new(),
+                    score: 0,
+                })
+                .collect();
+        } else if let Some(cached) = self.query_cache.get(&self.query) {
+            self.filtered_items = cached.0.clone();
+            self.match_positions = cached.1.clone();
         } else {
-            let query_lower = self.query.to_lowercase();
             let all_items = self.stream.get_all_items();
 
-            // Filter items that match the query
-            let mut results: Vec<String> = all_items
+            // Use the new scoring module for single-pass matching and scoring
+            let scored_results = scoring::score_batch(&all_items, &self.query);
+
+            // Extract filtered items and match positions (already sorted by score)
+            self.filtered_items = scored_results
+                .iter()
+                .map(|(idx, _)| all_items[*idx].clone())
+                .collect();
+
+            self.match_positions = scored_results
                 .into_iter()
-                .filter(|item| {
-                    let item_lower = item.to_lowercase();
-                    self.fuzzy_match(&item_lower, &query_lower)
+                .map(|(_, result)| MatchPositions {
+                    positions: result.positions,
+                    score: result.score,
                 })
                 .collect();
 
-            // Sort results using standard library sort with enhanced scoring
-            results.sort_unstable_by(|a, b| {
-                let a_score = self.calculate_enhanced_score(a, &query_lower);
-                let b_score = self.calculate_enhanced_score(b, &query_lower);
-                b_score
-                    .partial_cmp(&a_score)
-                    .unwrap_or(std::cmp::Ordering::Equal)
-            });
-
-            self.filtered_items = results;
-            self.calculate_match_positions();
-
-            self.query_cache
-                .insert(self.query.clone(), self.filtered_items.clone());
+            // Cache the results
+            self.query_cache.insert(
+                self.query.clone(),
+                (self.filtered_items.clone(), self.match_positions.clone()),
+            );
         }
 
         // Adjust cursor position
@@ -91,66 +97,6 @@ impl FuzzyFinder {
         }
     }
 
-    /// Simple fuzzy match check
-    fn fuzzy_match(&self, item: &str, query: &str) -> bool {
-        if query.is_empty() {
-            return true;
-        }
-
-        if item.contains(query) {
-            return true;
-        }
-
-        let mut query_chars = query.chars().peekable();
-        let mut item_chars = item.chars();
-
-        while let Some(query_char) = query_chars.peek() {
-            if let Some(item_char) = item_chars.next() {
-                if item_char == *query_char {
-                    query_chars.next();
-                }
-            } else {
-                return false;
-            }
-        }
-
-        query_chars.peek().is_none()
-    }
-
-    /// Calculate match positions for highlighting
-    fn calculate_match_positions(&mut self) {
-        self.match_positions.clear();
-        let query_lower = self.query.to_lowercase();
-
-        for item in &self.filtered_items {
-            let item_lower = item.to_lowercase();
-            let positions = self.find_match_positions(&item_lower, &query_lower);
-            let score = self.calculate_enhanced_score(item, &query_lower);
-            self.match_positions
-                .push(MatchPositions { positions, score });
-        }
-    }
-
-    /// Find positions of matching characters for highlighting
-    fn find_match_positions(&self, item: &str, query: &str) -> Vec<usize> {
-        let mut positions = Vec::new();
-        let mut query_chars = query.chars().peekable();
-        let mut item_chars = item.chars().enumerate();
-
-        while let Some(query_char) = query_chars.peek() {
-            if let Some((pos, item_char)) = item_chars.next() {
-                if item_char == *query_char {
-                    positions.push(pos);
-                    query_chars.next();
-                }
-            } else {
-                break;
-            }
-        }
-
-        positions
-    }
-
     /// Get match positions for a specific item index
     pub fn get_match_positions(&self, index: usize) -> Option<&MatchPositions> {
         self.match_positions.get(index)
@@ -159,63 +105,9 @@ impl FuzzyFinder {
     /// Add new items asynchronously
     pub async fn add_items(&mut self, new_items: Vec<String>) {
         self.stream.add_items(new_items).await;
+        // Clear cache when items change
+        self.query_cache.clear();
         self.update_filter().await;
-    }
-
-    /// Enhanced score calculation for better ranking
-    fn calculate_enhanced_score(&self, item: &str, query: &str) -> f64 {
-        let item_lower = item.to_lowercase();
-        let query_lower = query.to_lowercase();
-
-        if item_lower == query_lower {
-            return 1.0;
-        }
-
-        if item_lower.starts_with(&query_lower) {
-            return 0.9;
-        }
-
-        if item_lower.contains(&query_lower) {
-            return 0.8;
-        }
-
-        // Calculate character sequence score with consecutive bonus
-        let mut score = 0.0;
-        let mut query_chars = query_lower.chars().peekable();
-        let mut item_chars = item_lower.chars();
-        let mut consecutive = 0;
-        let mut total_matches = 0;
-
-        while let Some(query_char) = query_chars.peek() {
-            if let Some(item_char) = item_chars.next() {
-                if item_char == *query_char {
-                    consecutive += 1;
-                    total_matches += 1;
-                    query_chars.next();
-                } else {
-                    consecutive = 0;
-                }
-            } else {
-                break;
-            }
-        }
-
-        if query_chars.peek().is_none() {
-            // Base score for matching all characters
-            score = 0.5;
-
-            // Bonus for consecutive matches
-            score += consecutive as f64 * 0.1;
-
-            // Bonus for total matches
-            score += total_matches as f64 * 0.05;
-
-            // Penalty for length difference
-            let length_diff = (item_lower.len() as i32 - query_lower.len() as i32).abs() as f64;
-            score -= length_diff * 0.01;
-        }
-
-        score
     }
 
     /// Move cursor up or down (wraps around)

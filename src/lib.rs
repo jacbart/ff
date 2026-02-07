@@ -326,7 +326,10 @@ impl FuzzyFinderWithIndicators {
         item: impl Into<String>,
     ) -> Result<(), mpsc::error::SendError<TuiCommand>> {
         self.sender
-            .send(TuiCommand::UpdateIndicator(item.into(), ItemIndicator::None))
+            .send(TuiCommand::UpdateIndicator(
+                item.into(),
+                ItemIndicator::None,
+            ))
             .await
     }
 
@@ -335,9 +338,7 @@ impl FuzzyFinderWithIndicators {
         &self,
         status: GlobalStatus,
     ) -> Result<(), mpsc::error::SendError<TuiCommand>> {
-        self.sender
-            .send(TuiCommand::SetGlobalStatus(status))
-            .await
+        self.sender.send(TuiCommand::SetGlobalStatus(status)).await
     }
 
     /// Add multiple items to the finder.

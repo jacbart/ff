@@ -434,6 +434,6 @@ async fn test_match_positions() {
     assert!(positions.is_some());
     if let Some(match_pos) = positions {
         assert!(!match_pos.positions.is_empty());
-        assert!(match_pos.score > 0.0);
+        assert!(match_pos.score > 0);
     }
 }
