@@ -1,4 +1,5 @@
 use crate::fuzzy::FuzzyFinder;
+use crate::tui::buffer::ScreenBuffer;
 use crate::tui::controls::Action;
 use crossterm::{
     cursor::{position, Hide, MoveTo, Show},
@@ -226,6 +227,10 @@ async fn run_interactive_tui(
     let mut last_spinner_update = Instant::now();
     let spinner_interval = std::time::Duration::from_millis(80);
 
+    // Create screen buffer for double-buffered rendering
+    let (term_width, _) = size()?;
+    let mut screen_buffer = ScreenBuffer::new(term_width, tui_height);
+
     loop {
         // Process new items from mpsc receiver
         if !receiver_exhausted {
@@ -289,60 +294,30 @@ async fn run_interactive_tui(
 
         // Only redraw if needed (when query changes or cursor moves)
         if needs_redraw {
-            // Draw TUI - always start at the original cursor position
-            if fullscreen {
-                execute!(&mut stdout, MoveTo(0, 0), Clear(ClearType::All))?;
-            } else {
-                for i in 0..tui_height.max(2) {
-                    execute!(
-                        &mut stdout,
-                        MoveTo(0, original_cursor.1 + i),
-                        Clear(ClearType::CurrentLine)
-                    )?;
-                }
-                execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
-            }
+            // Resize buffer if terminal size changed
+            let (term_width, _) = size()?;
+            screen_buffer.resize(term_width, tui_height);
+            screen_buffer.clear();
 
-            // Draw search prompt with optional status indicator
-            let prompt_y = if fullscreen { 0 } else { original_cursor.1 };
-            execute!(
-                &mut stdout,
-                MoveTo(0, prompt_y),
-                SetForegroundColor(Color::Cyan),
-                Print("> "),
-                ResetColor,
-                Print(&fuzzy_finder.get_query())
-            )?;
+            // Draw search prompt with optional status indicator (row 0 in buffer)
+            let mut col: u16 = 0;
+            col += screen_buffer.put_str(col, 0, "> ", Some(Color::Cyan), None, false, false);
+            col += screen_buffer.put_str(col, 0, &fuzzy_finder.get_query(), None, None, false, false);
 
             // Draw status indicator (spinner or ready message)
             if config.show_loading_indicator {
-                execute!(&mut stdout, Print(" "))?;
+                col += screen_buffer.put_str(col, 0, " ", None, None, false, false);
                 if !receiver_exhausted {
                     // Show spinner
                     let frame = SPINNER_FRAMES[spinner_frame % SPINNER_FRAMES.len()];
-                    execute!(
-                        &mut stdout,
-                        SetForegroundColor(Color::Yellow),
-                        Print(frame),
-                        ResetColor
-                    )?;
+                    col += screen_buffer.put_str(col, 0, &frame.to_string(), Some(Color::Yellow), None, false, false);
                     if let Some(ref msg) = config.loading_message {
-                        execute!(
-                            &mut stdout,
-                            SetForegroundColor(Color::DarkGrey),
-                            Print(" "),
-                            Print(msg),
-                            ResetColor
-                        )?;
+                        col += screen_buffer.put_str(col, 0, " ", None, None, false, false);
+                        screen_buffer.put_str(col, 0, msg, Some(Color::DarkGrey), None, false, false);
                     }
                 } else if let Some(ref msg) = config.ready_message {
                     // Show ready message
-                    execute!(
-                        &mut stdout,
-                        SetForegroundColor(Color::Green),
-                        Print(msg),
-                        ResetColor
-                    )?;
+                    screen_buffer.put_str(col, 0, msg, Some(Color::Green), None, false, false);
                 }
             }
 
@@ -356,64 +331,48 @@ async fn run_interactive_tui(
 
                 for (i, item) in visible_items.enumerate() {
                     let absolute_index = scroll_offset + i;
-                    let y_pos = if fullscreen {
-                        (i + 1) as u16
-                    } else {
-                        original_cursor.1 + 1 + i as u16
-                    };
-                    execute!(&mut stdout, MoveTo(0, y_pos))?;
+                    let row = (i + 1) as u16; // Row in buffer (0 is prompt)
 
                     let is_cursor = absolute_index == fuzzy_finder.get_cursor_position();
                     let is_selected = fuzzy_finder.is_selected(item);
 
-                    draw_highlighted_item_with_matches(
-                        &mut stdout,
+                    draw_item_to_buffer(
+                        &mut screen_buffer,
+                        row,
                         item,
                         is_cursor,
                         is_selected,
                         fuzzy_finder.get_match_positions(absolute_index),
-                    )?;
-                    execute!(&mut stdout, ResetColor)?;
+                    );
                 }
             }
 
             if tui_height < 2 {
-                let warning_y = if fullscreen { 1 } else { original_cursor.1 + 1 };
-                execute!(
-                    &mut stdout,
-                    MoveTo(0, warning_y),
-                    SetForegroundColor(Color::Yellow),
-                    Print("Terminal too small. Please resize to continue..."),
-                    ResetColor
-                )?;
+                screen_buffer.put_str(
+                    0, 1,
+                    "Terminal too small. Please resize to continue...",
+                    Some(Color::Yellow), None, false, false
+                );
             }
 
             // Draw instructions (always at the bottom of the TUI area)
             if config.show_help_text {
-                let instructions_y = if fullscreen {
-                    tui_height.saturating_sub(1)
+                let instructions_row = tui_height.saturating_sub(1);
+                let instructions = if multi_select {
+                    "Tab/Space: Toggle | Enter: Confirm | Esc/Ctrl+C/Ctrl+Q: Exit"
                 } else {
-                    original_cursor.1 + tui_height.saturating_sub(1)
+                    "↑/↓: Navigate | Enter: Select | Esc/Ctrl+C/Ctrl+Q: Exit"
                 };
-                execute!(
-                    &mut stdout,
-                    MoveTo(0, instructions_y),
-                    SetForegroundColor(Color::DarkGrey)
-                )?;
-                if multi_select {
-                    execute!(
-                        &mut stdout,
-                        Print("Tab/Space: Toggle | Enter: Confirm | Esc/Ctrl+C/Ctrl+Q: Exit")
-                    )?;
-                } else {
-                    execute!(
-                        &mut stdout,
-                        Print("↑/↓: Navigate | Enter: Select | Esc/Ctrl+C/Ctrl+Q: Exit")
-                    )?;
-                }
-                execute!(&mut stdout, ResetColor)?;
+                screen_buffer.put_str(0, instructions_row, instructions, Some(Color::DarkGrey), None, false, false);
             }
 
+            // Render buffer to terminal in a single write
+            let rendered = if fullscreen {
+                screen_buffer.render_fullscreen()
+            } else {
+                screen_buffer.render(original_cursor.1)
+            };
+            write!(stdout, "{}", rendered)?;
             stdout.flush()?;
             needs_redraw = false;
         }
@@ -549,6 +508,10 @@ async fn run_interactive_tui_with_indicators(
     let mut last_spinner_update = Instant::now();
     let spinner_interval = std::time::Duration::from_millis(80);
 
+    // Create screen buffer for double-buffered rendering
+    let (term_width, _) = size()?;
+    let mut screen_buffer = ScreenBuffer::new(term_width, tui_height);
+
     loop {
         // Process commands from channel
         if !receiver_exhausted {
@@ -632,72 +595,38 @@ async fn run_interactive_tui_with_indicators(
         }
 
         if needs_redraw {
-            if fullscreen {
-                execute!(&mut stdout, MoveTo(0, 0), Clear(ClearType::All))?;
-            } else {
-                for i in 0..tui_height.max(2) {
-                    execute!(
-                        &mut stdout,
-                        MoveTo(0, original_cursor.1 + i),
-                        Clear(ClearType::CurrentLine)
-                    )?;
-                }
-                execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
-            }
+            // Resize buffer if terminal size changed
+            let (term_width, _) = size()?;
+            screen_buffer.resize(term_width, tui_height);
+            screen_buffer.clear();
 
-            // Draw search prompt with global status indicator
-            let prompt_y = if fullscreen { 0 } else { original_cursor.1 };
-            execute!(
-                &mut stdout,
-                MoveTo(0, prompt_y),
-                SetForegroundColor(Color::Cyan),
-                Print("> "),
-                ResetColor,
-                Print(&fuzzy_finder.get_query())
-            )?;
+            // Draw search prompt with global status indicator (row 0 in buffer)
+            let mut col: u16 = 0;
+            col += screen_buffer.put_str(col, 0, "> ", Some(Color::Cyan), None, false, false);
+            col += screen_buffer.put_str(col, 0, &fuzzy_finder.get_query(), None, None, false, false);
 
             // Draw global status indicator
             if config.show_loading_indicator {
-                execute!(&mut stdout, Print(" "))?;
+                col += screen_buffer.put_str(col, 0, " ", None, None, false, false);
                 match &global_status {
                     GlobalStatus::Loading(msg) => {
                         let frame = SPINNER_FRAMES[spinner_frame % SPINNER_FRAMES.len()];
-                        execute!(
-                            &mut stdout,
-                            SetForegroundColor(Color::Yellow),
-                            Print(frame),
-                            ResetColor
-                        )?;
+                        col += screen_buffer.put_str(col, 0, &frame.to_string(), Some(Color::Yellow), None, false, false);
                         if let Some(ref m) = msg {
-                            execute!(
-                                &mut stdout,
-                                SetForegroundColor(Color::DarkGrey),
-                                Print(" "),
-                                Print(m),
-                                ResetColor
-                            )?;
+                            col += screen_buffer.put_str(col, 0, " ", None, None, false, false);
+                            screen_buffer.put_str(col, 0, m, Some(Color::DarkGrey), None, false, false);
                         } else if let Some(ref m) = config.loading_message {
-                            execute!(
-                                &mut stdout,
-                                SetForegroundColor(Color::DarkGrey),
-                                Print(" "),
-                                Print(m),
-                                ResetColor
-                            )?;
+                            col += screen_buffer.put_str(col, 0, " ", None, None, false, false);
+                            screen_buffer.put_str(col, 0, m, Some(Color::DarkGrey), None, false, false);
                         }
                     }
                     GlobalStatus::Ready(msg) => {
                         if let Some(ref m) = msg {
-                            execute!(
-                                &mut stdout,
-                                SetForegroundColor(Color::Green),
-                                Print(m),
-                                ResetColor
-                            )?;
+                            screen_buffer.put_str(col, 0, m, Some(Color::Green), None, false, false);
                         }
                     }
                     GlobalStatus::Custom(text) => {
-                        execute!(&mut stdout, Print(text))?;
+                        screen_buffer.put_str(col, 0, text, None, None, false, false);
                     }
                     GlobalStatus::Hidden => {}
                 }
@@ -713,66 +642,51 @@ async fn run_interactive_tui_with_indicators(
 
                 for (i, item) in visible_items.enumerate() {
                     let absolute_index = scroll_offset + i;
-                    let y_pos = if fullscreen {
-                        (i + 1) as u16
-                    } else {
-                        original_cursor.1 + 1 + i as u16
-                    };
-                    execute!(&mut stdout, MoveTo(0, y_pos))?;
+                    let row = (i + 1) as u16; // Row in buffer (0 is prompt)
 
                     let is_cursor = absolute_index == fuzzy_finder.get_cursor_position();
                     let is_selected = fuzzy_finder.is_selected(item);
                     let indicator = item_indicators.get(item);
 
-                    draw_item_with_indicator(
-                        &mut stdout,
+                    draw_item_with_indicator_to_buffer(
+                        &mut screen_buffer,
+                        row,
                         item,
                         is_cursor,
                         is_selected,
                         fuzzy_finder.get_match_positions(absolute_index),
                         indicator,
                         spinner_frame,
-                    )?;
-                    execute!(&mut stdout, ResetColor)?;
+                    );
                 }
             }
 
             if tui_height < 2 {
-                let warning_y = if fullscreen { 1 } else { original_cursor.1 + 1 };
-                execute!(
-                    &mut stdout,
-                    MoveTo(0, warning_y),
-                    SetForegroundColor(Color::Yellow),
-                    Print("Terminal too small. Please resize to continue..."),
-                    ResetColor
-                )?;
+                screen_buffer.put_str(
+                    0, 1,
+                    "Terminal too small. Please resize to continue...",
+                    Some(Color::Yellow), None, false, false
+                );
             }
 
+            // Draw instructions (always at the bottom of the TUI area)
             if config.show_help_text {
-                let instructions_y = if fullscreen {
-                    tui_height.saturating_sub(1)
+                let instructions_row = tui_height.saturating_sub(1);
+                let instructions = if multi_select {
+                    "Tab/Space: Toggle | Enter: Confirm | Esc/Ctrl+C/Ctrl+Q: Exit"
                 } else {
-                    original_cursor.1 + tui_height.saturating_sub(1)
+                    "↑/↓: Navigate | Enter: Select | Esc/Ctrl+C/Ctrl+Q: Exit"
                 };
-                execute!(
-                    &mut stdout,
-                    MoveTo(0, instructions_y),
-                    SetForegroundColor(Color::DarkGrey)
-                )?;
-                if multi_select {
-                    execute!(
-                        &mut stdout,
-                        Print("Tab/Space: Toggle | Enter: Confirm | Esc/Ctrl+C/Ctrl+Q: Exit")
-                    )?;
-                } else {
-                    execute!(
-                        &mut stdout,
-                        Print("↑/↓: Navigate | Enter: Select | Esc/Ctrl+C/Ctrl+Q: Exit")
-                    )?;
-                }
-                execute!(&mut stdout, ResetColor)?;
+                screen_buffer.put_str(0, instructions_row, instructions, Some(Color::DarkGrey), None, false, false);
             }
 
+            // Render buffer to terminal in a single write
+            let rendered = if fullscreen {
+                screen_buffer.render_fullscreen()
+            } else {
+                screen_buffer.render(original_cursor.1)
+            };
+            write!(stdout, "{}", rendered)?;
             stdout.flush()?;
             needs_redraw = false;
         }
@@ -839,6 +753,8 @@ async fn run_interactive_tui_with_indicators(
 }
 
 /// Draw an item with optional per-item indicator
+/// NOTE: This function is kept for testing purposes. Production code uses draw_item_with_indicator_to_buffer.
+#[allow(dead_code)]
 fn draw_item_with_indicator<W: Write>(
     stdout: &mut W,
     item: &str,
@@ -1037,6 +953,8 @@ async fn handle_async_key_event(
 }
 
 /// Draw highlighted item with fuzzy match highlighting using Gruvbox soft colors
+/// NOTE: This function is kept for testing purposes. Production code uses draw_item_to_buffer.
+#[allow(dead_code)]
 fn draw_highlighted_item_with_matches<W: Write>(
     stdout: &mut W,
     item: &str,
@@ -1109,6 +1027,162 @@ fn draw_highlighted_item_with_matches<W: Write>(
     // Reset all attributes
     execute!(stdout, ResetColor)?;
     Ok(())
+}
+
+/// Draw an item to the screen buffer with fuzzy match highlighting
+fn draw_item_to_buffer(
+    buffer: &mut ScreenBuffer,
+    row: u16,
+    item: &str,
+    is_cursor: bool,
+    is_selected: bool,
+    match_positions: Option<&crate::fuzzy::finder::MatchPositions>,
+) {
+    let mut col: u16 = 0;
+
+    // Determine base styling for this row
+    let (base_fg, base_bg, base_bold) = if is_cursor {
+        (Some(Color::Yellow), Some(Color::DarkGrey), true)
+    } else {
+        (None, None, false)
+    };
+
+    // Draw selection indicator
+    if is_selected {
+        col += buffer.put_str(col, row, "✓ ", Some(Color::Green), base_bg, false, false);
+    } else {
+        col += buffer.put_str(col, row, "  ", base_fg, base_bg, base_bold, false);
+    }
+
+    // Draw item text with match highlighting
+    if let Some(matches) = match_positions {
+        for (i, ch) in item.chars().enumerate() {
+            if col >= buffer.width() {
+                break;
+            }
+            let is_match = matches.positions.contains(&i);
+            let (fg, bold, underline) = if is_match {
+                if is_cursor {
+                    (Some(Color::White), true, true)
+                } else {
+                    (base_fg, true, true)
+                }
+            } else {
+                (base_fg, base_bold, false)
+            };
+            buffer.put_char(col, row, ch, fg, base_bg, bold, underline);
+            col += 1;
+        }
+    } else {
+        // No match highlighting, just draw the item
+        for ch in item.chars() {
+            if col >= buffer.width() {
+                break;
+            }
+            buffer.put_char(col, row, ch, base_fg, base_bg, base_bold, false);
+            col += 1;
+        }
+    }
+
+    // Fill the rest of the row with background color if cursor is on this row
+    if is_cursor {
+        while col < buffer.width() {
+            buffer.put_char(col, row, ' ', base_fg, base_bg, false, false);
+            col += 1;
+        }
+    }
+}
+
+/// Draw an item with indicator to the screen buffer
+fn draw_item_with_indicator_to_buffer(
+    buffer: &mut ScreenBuffer,
+    row: u16,
+    item: &str,
+    is_cursor: bool,
+    is_selected: bool,
+    match_positions: Option<&crate::fuzzy::finder::MatchPositions>,
+    indicator: Option<&ItemIndicator>,
+    spinner_frame: usize,
+) {
+    let mut col: u16 = 0;
+
+    // Determine base styling for this row
+    let (base_fg, base_bg, base_bold) = if is_cursor {
+        (Some(Color::Yellow), Some(Color::DarkGrey), true)
+    } else {
+        (None, None, false)
+    };
+
+    // Draw indicator prefix
+    match indicator {
+        Some(ItemIndicator::Spinner) => {
+            let frame = SPINNER_FRAMES[spinner_frame % SPINNER_FRAMES.len()];
+            col += buffer.put_str(col, row, &format!("{} ", frame), Some(Color::Yellow), base_bg, false, false);
+        }
+        Some(ItemIndicator::Text(text)) => {
+            col += buffer.put_str(col, row, text, base_fg, base_bg, base_bold, false);
+            col += buffer.put_str(col, row, " ", base_fg, base_bg, base_bold, false);
+        }
+        Some(ItemIndicator::ColoredText(text, color)) => {
+            col += buffer.put_str(col, row, text, Some(*color), base_bg, false, false);
+            col += buffer.put_str(col, row, " ", base_fg, base_bg, base_bold, false);
+        }
+        Some(ItemIndicator::Success) => {
+            col += buffer.put_str(col, row, "✓ ", Some(Color::Green), base_bg, false, false);
+        }
+        Some(ItemIndicator::Error) => {
+            col += buffer.put_str(col, row, "✗ ", Some(Color::Red), base_bg, false, false);
+        }
+        Some(ItemIndicator::Warning) => {
+            col += buffer.put_str(col, row, "⚠ ", Some(Color::Yellow), base_bg, false, false);
+        }
+        Some(ItemIndicator::None) | None => {
+            // Selection indicator takes precedence when no other indicator
+            if is_selected {
+                col += buffer.put_str(col, row, "✓ ", Some(Color::Green), base_bg, false, false);
+            } else {
+                col += buffer.put_str(col, row, "  ", base_fg, base_bg, base_bold, false);
+            }
+        }
+    }
+
+    // Draw item text with match highlighting
+    if let Some(matches) = match_positions {
+        for (i, ch) in item.chars().enumerate() {
+            if col >= buffer.width() {
+                break;
+            }
+            let is_match = matches.positions.contains(&i);
+            let (fg, bold, underline) = if is_match {
+                if is_cursor {
+                    (Some(Color::White), true, true)
+                } else {
+                    (base_fg, true, true)
+                }
+            } else {
+                (base_fg, base_bold, false)
+            };
+            buffer.put_char(col, row, ch, fg, base_bg, bold, underline);
+            col += 1;
+        }
+    } else {
+        // No match highlighting, just draw the item
+        for ch in item.chars() {
+            if col >= buffer.width() {
+                break;
+            }
+            buffer.put_char(col, row, ch, base_fg, base_bg, base_bold, false);
+            col += 1;
+        }
+    }
+
+    // Fill the rest of the row with background color if cursor is on this row
+    if is_cursor {
+        while col < buffer.width() {
+            buffer.put_char(col, row, ' ', base_fg, base_bg, false, false);
+            col += 1;
+        }
+    }
 }
 
 #[cfg(test)]
