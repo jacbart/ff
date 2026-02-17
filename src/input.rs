@@ -37,9 +37,7 @@ pub fn process_stdin_content(content: &str) -> Result<Vec<String>, String> {
     let mut items = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
-        if !trimmed.is_empty() {
-            items.push(trimmed.to_string());
-        }
+        items.push(trimmed.to_string());
     }
     if items.is_empty() {
         return Err("No items found in stdin".to_string());
@@ -52,7 +50,6 @@ pub fn process_file_content(content: &str) -> Result<Vec<String>, String> {
     let items: Vec<String> = content
         .lines()
         .map(|line| line.trim())
-        .filter(|line| !line.is_empty())
         .map(|line| line.to_string())
         .collect();
     if items.is_empty() {
@@ -159,7 +156,7 @@ async fn send_from_file(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let content = fs::read_to_string(file_path).await?;
     for line in content.lines() {
-        if !line.trim().is_empty() && sender.send(line.trim().to_string()).await.is_err() {
+        if sender.send(line.trim().to_string()).await.is_err() {
             break; // Channel closed
         }
     }
@@ -187,7 +184,7 @@ async fn send_from_unix_socket(
 
     let content = String::from_utf8(buffer)?;
     for line in content.lines() {
-        if !line.trim().is_empty() && sender.send(line.trim().to_string()).await.is_err() {
+        if sender.send(line.trim().to_string()).await.is_err() {
             break; // Channel closed
         }
     }
@@ -214,7 +211,7 @@ async fn send_from_http_socket(
 
     let content = String::from_utf8_lossy(&buffer);
     for line in content.lines() {
-        if !line.trim().is_empty() && sender.send(line.trim().to_string()).await.is_err() {
+        if sender.send(line.trim().to_string()).await.is_err() {
             break; // Channel closed
         }
     }
@@ -233,9 +230,7 @@ async fn send_from_directory(
         let path = entry.path();
         if let Some(name) = path.file_name() {
             if let Some(name_str) = name.to_str() {
-                if !name_str.trim().is_empty()
-                    && sender.send(name_str.trim().to_string()).await.is_err()
-                {
+                if sender.send(name_str.trim().to_string()).await.is_err() {
                     break; // Channel closed
                 }
             }

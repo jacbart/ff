@@ -11,6 +11,8 @@ pub enum CliAction {
         items: Vec<String>,
         /// Whether multi-select mode is enabled
         multi_select: bool,
+        /// Whether to output line numbers instead of content
+        line_number: bool,
         /// Fixed height in lines
         height: Option<u16>,
         /// Height as percentage of terminal
@@ -45,6 +47,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     let multi_select = args
         .iter()
         .any(|arg| arg == "--multi-select" || arg == "-m");
+    let line_number = args.iter().any(|arg| arg == "--line-number" || arg == "-n");
 
     // Parse height options
     let mut height: Option<u16> = None;
@@ -127,6 +130,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
         return CliAction::RunAsyncTui {
             items: vec![input_source],
             multi_select,
+            line_number,
             height,
             height_percentage,
             show_help_text,
@@ -140,6 +144,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             return CliAction::RunAsyncTui {
                 items: vec![format!("dir:{}", input_source)],
                 multi_select,
+                line_number,
                 height,
                 height_percentage,
                 show_help_text,
@@ -148,6 +153,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             return CliAction::RunAsyncTui {
                 items: vec![input_source],
                 multi_select,
+                line_number,
                 height,
                 height_percentage,
                 show_help_text,
@@ -166,6 +172,10 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
         }
 
         if *arg == "--multi-select" || *arg == "-m" {
+            continue;
+        }
+
+        if *arg == "--line-number" || *arg == "-n" {
             continue;
         }
 
@@ -195,6 +205,7 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     CliAction::RunAsyncTui {
         items: direct_items,
         multi_select,
+        line_number,
         height,
         height_percentage,
         show_help_text,

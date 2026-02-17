@@ -1,10 +1,9 @@
 use futures::stream::{self, Stream};
-use std::collections::BTreeSet;
 use tokio::sync::mpsc;
 
 /// Async stream for processing items
 pub struct ItemStream {
-    items: BTreeSet<String>,
+    items: Vec<String>,
     tx: mpsc::Sender<String>,
     rx: mpsc::Receiver<String>,
 }
@@ -14,7 +13,7 @@ impl ItemStream {
     pub fn new() -> Self {
         let (tx, rx) = mpsc::channel(1000);
         Self {
-            items: BTreeSet::new(),
+            items: Vec::new(),
             tx,
             rx,
         }
@@ -23,7 +22,7 @@ impl ItemStream {
     /// Add items to the stream
     pub async fn add_items(&mut self, new_items: Vec<String>) {
         for item in new_items {
-            self.items.insert(item.clone());
+            self.items.push(item.clone());
             if (self.tx.send(item).await).is_err() {
                 break;
             }

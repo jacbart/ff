@@ -13,12 +13,14 @@ pub struct FuzzyFinder {
     pub(crate) stream: ItemStream,
     pub(crate) query: String,
     pub(crate) filtered_items: Vec<String>,
+    pub(crate) filtered_indices: Vec<usize>,
     pub(crate) match_positions: Vec<MatchPositions>,
-    pub(crate) selected_items: std::collections::HashSet<String>,
+    pub(crate) selected_items: std::collections::HashSet<usize>,
     pub(crate) cursor_position: usize,
     pub(crate) multi_select: bool,
-    /// Cache stores (filtered_items, match_positions) for each query
-    pub(crate) query_cache: std::collections::HashMap<String, (Vec<String>, Vec<MatchPositions>)>,
+    /// Cache stores (filtered_items, filtered_indices, match_positions) for each query
+    pub(crate) query_cache:
+        std::collections::HashMap<String, (Vec<String>, Vec<usize>, Vec<MatchPositions>)>,
 }
 
 impl FuzzyFinder {
@@ -29,6 +31,7 @@ impl FuzzyFinder {
             stream,
             query: String::new(),
             filtered_items: Vec::new(),
+            filtered_indices: Vec::new(),
             match_positions: Vec::new(),
             selected_items: std::collections::HashSet::new(),
             cursor_position: 0,
@@ -40,15 +43,22 @@ impl FuzzyFinder {
     /// Async constructor: create and add initial items
     pub async fn with_items_async(items: Vec<String>, multi_select: bool) -> Self {
         let mut finder = Self::new(multi_select);
-        finder.stream.add_items(items).await;
-        finder.filtered_items = finder.stream.get_all_items();
+        finder.add_items(items).await;
         finder
     }
 
     /// Update the filtered items based on the current query
     pub async fn update_filter(&mut self) {
         if self.query.is_empty() {
-            self.filtered_items = self.stream.get_all_items();
+            let all_items = self.stream.get_all_items();
+            self.filtered_items = Vec::new();
+            self.filtered_indices = Vec::new();
+            for (idx, item) in all_items.iter().enumerate() {
+                if !item.is_empty() {
+                    self.filtered_items.push(item.clone());
+                    self.filtered_indices.push(idx);
+                }
+            }
             self.match_positions = self
                 .filtered_items
                 .iter()
@@ -59,7 +69,8 @@ impl FuzzyFinder {
                 .collect();
         } else if let Some(cached) = self.query_cache.get(&self.query) {
             self.filtered_items = cached.0.clone();
-            self.match_positions = cached.1.clone();
+            self.filtered_indices = cached.1.clone();
+            self.match_positions = cached.2.clone();
         } else {
             let all_items = self.stream.get_all_items();
 
@@ -72,6 +83,8 @@ impl FuzzyFinder {
                 .map(|(idx, _)| all_items[*idx].clone())
                 .collect();
 
+            self.filtered_indices = scored_results.iter().map(|(idx, _)| *idx).collect();
+
             self.match_positions = scored_results
                 .into_iter()
                 .map(|(_, result)| MatchPositions {
@@ -83,7 +96,11 @@ impl FuzzyFinder {
             // Cache the results
             self.query_cache.insert(
                 self.query.clone(),
-                (self.filtered_items.clone(), self.match_positions.clone()),
+                (
+                    self.filtered_items.clone(),
+                    self.filtered_indices.clone(),
+                    self.match_positions.clone(),
+                ),
             );
         }
 
@@ -166,22 +183,30 @@ impl FuzzyFinder {
             return;
         }
 
-        let selected_item = self.filtered_items[self.cursor_position].clone();
-        if self.selected_items.contains(&selected_item) {
-            self.selected_items.remove(&selected_item);
+        let selected_index = self.filtered_indices[self.cursor_position];
+        if self.selected_items.contains(&selected_index) {
+            self.selected_items.remove(&selected_index);
         } else {
-            self.selected_items.insert(selected_item);
+            self.selected_items.insert(selected_index);
         }
     }
 
     /// Get selected items
-    pub fn get_selected_items(&self) -> Vec<String> {
-        self.selected_items.iter().cloned().collect()
+    pub fn get_selected_items(&self) -> Vec<(usize, String)> {
+        let all_items = self.stream.get_all_items();
+        let mut selected: Vec<(usize, String)> = self
+            .selected_items
+            .iter()
+            .map(|&idx| (idx, all_items[idx].clone()))
+            .collect();
+        // Sort by index to preserve original order
+        selected.sort_by_key(|k| k.0);
+        selected
     }
 
-    /// Check if an item is selected
-    pub fn is_selected(&self, item: &str) -> bool {
-        self.selected_items.contains(item)
+    /// Check if an item is selected by its original index
+    pub fn is_selected(&self, original_index: usize) -> bool {
+        self.selected_items.contains(&original_index)
     }
 
     /// Set query and update filter
@@ -193,6 +218,11 @@ impl FuzzyFinder {
     /// Get filtered items
     pub fn get_filtered_items(&self) -> &[String] {
         &self.filtered_items
+    }
+
+    /// Get the original index for a filtered item at the given position
+    pub fn get_original_index(&self, position: usize) -> Option<usize> {
+        self.filtered_indices.get(position).cloned()
     }
 
     /// Get cursor position

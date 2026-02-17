@@ -11,7 +11,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
 };
 use std::{
-    io::{self, Write},
+    io::{self, Read, Write},
     mem,
     time::Instant,
 };
@@ -164,7 +164,7 @@ impl TuiConfig {
 pub async fn run_tui(
     items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>> {
     run_tui_with_config(items_receiver, multi_select, TuiConfig::default()).await
 }
 
@@ -173,7 +173,7 @@ pub async fn run_tui_with_config(
     items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
     config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>> {
     run_interactive_tui(items_receiver, multi_select, config).await
 }
 
@@ -182,17 +182,41 @@ async fn run_interactive_tui(
     mut items_receiver: mpsc::Receiver<String>,
     multi_select: bool,
     config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>> {
     let mut fuzzy_finder = FuzzyFinder::new(multi_select);
-    let mut stdout = io::stdout();
+    let mut stdout = io::stderr();
 
     // Enable raw mode and hide cursor
     enable_raw_mode()?;
     execute!(stdout, Hide)?;
 
-    let fullscreen = config.fullscreen;
-    let mut original_cursor = position()?;
-    let (_term_width, term_height) = size()?;
+    let mut fullscreen = config.fullscreen;
+    let mut original_cursor = (0, 0);
+
+    if !fullscreen {
+        // Try to get cursor position. If it fails (e.g. stdout is not a TTY),
+        // try to fallback to stderr query or force fullscreen.
+        match position() {
+            Ok(pos) => original_cursor = pos,
+            Err(_) => {
+                match get_cursor_position_from_stderr() {
+                    Ok(pos) => original_cursor = pos,
+                    Err(_) => {
+                        // Could not determine cursor position, fallback to fullscreen
+                        fullscreen = true;
+                    }
+                }
+            }
+        }
+    }
+
+    let (_term_width, term_height) = match size() {
+        Ok(s) => s,
+        Err(_) => {
+            // Fallback for size if stdout is not TTY
+            get_terminal_size_from_stderr().unwrap_or((80, 24))
+        }
+    };
     let tui_height = config.calculate_height(term_height);
 
     if fullscreen {
@@ -351,7 +375,12 @@ async fn run_interactive_tui(
                     let row = (i + 1) as u16; // Row in buffer (0 is prompt)
 
                     let is_cursor = absolute_index == fuzzy_finder.get_cursor_position();
-                    let is_selected = fuzzy_finder.is_selected(item);
+                    let original_index = fuzzy_finder.get_original_index(absolute_index);
+                    let is_selected = if let Some(idx) = original_index {
+                        fuzzy_finder.is_selected(idx)
+                    } else {
+                        false
+                    };
 
                     draw_item_to_buffer(
                         &mut screen_buffer,
@@ -457,12 +486,91 @@ async fn run_interactive_tui(
     // Restore terminal state
     disable_raw_mode()?;
 
-    if !selected_items.is_empty() {
-        // Move to the original cursor position
+    if !selected_items.is_empty() && !fullscreen {
+        // Move to the original cursor position only in inline mode
         execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
     }
 
     Ok(selected_items)
+}
+
+/// Get cursor position by querying stderr (fallback for when stdout is redirected)
+fn get_cursor_position_from_stderr() -> io::Result<(u16, u16)> {
+    let mut stderr = io::stderr();
+    let mut stdin = io::stdin();
+
+    // Write ANSI query for cursor position
+    write!(stderr, "\x1b[6n")?;
+    stderr.flush()?;
+
+    // Read response: ESC [ rows ; cols R
+    let mut buf = [0u8; 1];
+    let mut response = Vec::new();
+    let mut read_count = 0;
+
+    // Read byte by byte until 'R' or limit
+    while read_count < 16 {
+        match stdin.read_exact(&mut buf) {
+            Ok(_) => {
+                response.push(buf[0]);
+                if buf[0] == b'R' {
+                    break;
+                }
+            }
+            Err(_) => break,
+        }
+        read_count += 1;
+    }
+
+    // Parse response
+    let s = String::from_utf8_lossy(&response);
+    if s.starts_with("\x1b[") && s.ends_with('R') {
+        let content = &s[2..s.len() - 1];
+        let parts: Vec<&str> = content.split(';').collect();
+        if parts.len() == 2 {
+            let row = parts[0].parse::<u16>().unwrap_or(1);
+            let col = parts[1].parse::<u16>().unwrap_or(1);
+            // ANSI is 1-based, crossterm is 0-based
+            return Ok((col.saturating_sub(1), row.saturating_sub(1)));
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        "Failed to parse cursor position from stderr",
+    ))
+}
+
+/// Get terminal size by querying stderr (fallback)
+/// Uses `crossterm::terminal::size` normally, but this can fail if stdout is a pipe.
+/// This implementation relies on `crossterm` actually working on stderr if we redirect?
+/// No, crossterm uses stdout fd.
+/// We can try to use `stty size` or similar? Or just return error.
+/// For now, a simple placeholder or trying to use `ioctl` (unsafe) would be needed.
+/// Since we can't easily do unsafe ioctl here without deps, we'll return error.
+fn get_terminal_size_from_stderr() -> io::Result<(u16, u16)> {
+    // Basic fallback: try to read from `stty size` command if available
+    use std::process::Command;
+    let output = Command::new("stty")
+        .arg("size")
+        .arg("-F")
+        .arg("/dev/stderr")
+        .output();
+
+    if let Ok(output) = output {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        let parts: Vec<&str> = output_str.trim().split_whitespace().collect();
+        if parts.len() == 2 {
+            let rows = parts[0].parse::<u16>().unwrap_or(24);
+            let cols = parts[1].parse::<u16>().unwrap_or(80);
+            return Ok((cols, rows));
+        }
+    }
+
+    Err(io::Error::new(
+        io::ErrorKind::Other,
+        "Failed to get terminal size from stderr",
+    ))
 }
 
 /// Create an mpsc channel for sending items to the TUI
@@ -480,7 +588,7 @@ pub async fn run_tui_with_indicators(
     command_receiver: mpsc::Receiver<TuiCommand>,
     multi_select: bool,
     config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>> {
     run_interactive_tui_with_indicators(command_receiver, multi_select, config).await
 }
 
@@ -489,9 +597,9 @@ async fn run_interactive_tui_with_indicators(
     mut command_receiver: mpsc::Receiver<TuiCommand>,
     multi_select: bool,
     config: TuiConfig,
-) -> Result<Vec<String>, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>> {
     let mut fuzzy_finder = FuzzyFinder::new(multi_select);
-    let mut stdout = io::stdout();
+    let mut stdout = io::stderr();
 
     // Per-item indicators storage (keyed by item text)
     let mut item_indicators: std::collections::HashMap<String, ItemIndicator> =
@@ -707,7 +815,12 @@ async fn run_interactive_tui_with_indicators(
                     let row = (i + 1) as u16; // Row in buffer (0 is prompt)
 
                     let is_cursor = absolute_index == fuzzy_finder.get_cursor_position();
-                    let is_selected = fuzzy_finder.is_selected(item);
+                    let original_index = fuzzy_finder.get_original_index(absolute_index);
+                    let is_selected = if let Some(idx) = original_index {
+                        fuzzy_finder.is_selected(idx)
+                    } else {
+                        false
+                    };
                     let indicator = item_indicators.get(item);
 
                     draw_item_with_indicator_to_buffer(
@@ -1011,16 +1124,18 @@ async fn handle_async_key_event(
                 && !fuzzy_finder.get_filtered_items().is_empty()
             {
                 // In single select mode, select the current item if no items are selected
-                let current_item =
-                    &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
-                Action::Select(vec![current_item.clone()])
+                let cursor_pos = fuzzy_finder.get_cursor_position();
+                let current_item = &fuzzy_finder.get_filtered_items()[cursor_pos];
+                let current_idx = fuzzy_finder.get_original_index(cursor_pos).unwrap();
+                Action::Select(vec![(current_idx, current_item.clone())])
             } else if fuzzy_finder.is_multi_select()
                 && !fuzzy_finder.get_filtered_items().is_empty()
             {
                 // In multi-select mode, if no items are selected, select the current item
-                let current_item =
-                    &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
-                Action::Select(vec![current_item.clone()])
+                let cursor_pos = fuzzy_finder.get_cursor_position();
+                let current_item = &fuzzy_finder.get_filtered_items()[cursor_pos];
+                let current_idx = fuzzy_finder.get_original_index(cursor_pos).unwrap();
+                Action::Select(vec![(current_idx, current_item.clone())])
             } else {
                 Action::Continue
             }

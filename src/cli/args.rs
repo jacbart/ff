@@ -12,6 +12,11 @@ pub fn has_multi_select_flag(args: &[String]) -> bool {
         .any(|arg| arg == "--multi-select" || arg == "-m")
 }
 
+/// Check if any line number flag is present in the arguments.
+pub fn has_line_number_flag(args: &[String]) -> bool {
+    args.iter().any(|arg| arg == "--line-number" || arg == "-n")
+}
+
 /// Check if a string represents a file path.
 pub fn is_file_path(arg: &str) -> bool {
     arg != "--multi-select" && arg != "--help" && arg != "-h" && Path::new(arg).exists()
@@ -98,10 +103,46 @@ mod tests {
     }
 
     #[test]
+    fn test_has_line_number_flag_empty() {
+        let args = vec![];
+        assert!(!has_line_number_flag(&args));
+    }
+
+    #[test]
+    fn test_has_line_number_flag_long() {
+        let args = vec!["--line-number".to_string()];
+        assert!(has_line_number_flag(&args));
+    }
+
+    #[test]
+    fn test_has_line_number_flag_short() {
+        let args = vec!["-n".to_string()];
+        assert!(has_line_number_flag(&args));
+    }
+
+    #[test]
+    fn test_has_line_number_flag_mixed() {
+        let args = vec![
+            "other".to_string(),
+            "--line-number".to_string(),
+            "file.txt".to_string(),
+        ];
+        assert!(has_line_number_flag(&args));
+    }
+
+    #[test]
+    fn test_has_line_number_flag_no_line_number() {
+        let args = vec!["--help".to_string(), "--version".to_string()];
+        assert!(!has_line_number_flag(&args));
+    }
+
+    #[test]
     fn test_is_file_path_special_flags() {
         assert!(!is_file_path("--multi-select"));
+        assert!(!is_file_path("--line-number"));
         assert!(!is_file_path("--help"));
         assert!(!is_file_path("-h"));
+        assert!(!is_file_path("-n"));
     }
 
     #[test]

@@ -165,7 +165,10 @@ async fn test_toggle_selection_single_mode() {
         FuzzyFinder::with_items_async(vec!["apple".to_string(), "banana".to_string()], false).await;
     finder.toggle_selection();
 
-    assert_eq!(finder.get_selected_items(), vec!["apple".to_string()]);
+    assert_eq!(
+        finder.get_selected_items(),
+        vec![(0, "apple".to_string())]
+    );
 }
 
 #[tokio::test]
@@ -177,8 +180,11 @@ async fn test_toggle_selection_multi_mode() {
     finder.toggle_selection();
 
     let mut selected = finder.get_selected_items();
-    selected.sort();
-    assert_eq!(selected, vec!["apple".to_string(), "banana".to_string()]);
+    selected.sort_by_key(|k| k.0);
+    assert_eq!(
+        selected,
+        vec![(0, "apple".to_string()), (1, "banana".to_string())]
+    );
 }
 
 #[tokio::test]
@@ -198,7 +204,7 @@ async fn test_get_selected_items_single_mode() {
     finder.toggle_selection();
 
     let selected = finder.get_selected_items();
-    assert_eq!(selected, vec!["apple".to_string()]);
+    assert_eq!(selected, vec![(0, "apple".to_string())]);
 }
 
 #[tokio::test]
@@ -219,13 +225,13 @@ async fn test_get_selected_items_multi_mode() {
     finder.toggle_selection();
 
     let mut selected = finder.get_selected_items();
-    selected.sort();
+    selected.sort_by_key(|k| k.0);
     assert_eq!(
         selected,
         vec![
-            "apple".to_string(),
-            "banana".to_string(),
-            "cherry".to_string()
+            (0, "apple".to_string()),
+            (1, "banana".to_string()),
+            (2, "cherry".to_string())
         ]
     );
 }

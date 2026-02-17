@@ -9,7 +9,7 @@ pub enum Action {
     /// Exit the application
     Exit,
     /// Select items and exit
-    Select(Vec<String>),
+    Select(Vec<(usize, String)>),
 }
 
 /// Handle key events and return appropriate actions
@@ -55,9 +55,18 @@ pub fn handle_key_event(key_event: &KeyEvent, fuzzy_finder: &mut FuzzyFinder) ->
                 && !fuzzy_finder.get_filtered_items().is_empty()
             {
                 // In single select mode, select the current item if no items are selected
-                let current_item =
-                    &fuzzy_finder.get_filtered_items()[fuzzy_finder.get_cursor_position()];
-                Action::Select(vec![current_item.clone()])
+                let cursor_pos = fuzzy_finder.get_cursor_position();
+                let current_item = &fuzzy_finder.get_filtered_items()[cursor_pos];
+                let current_idx = fuzzy_finder.get_original_index(cursor_pos).unwrap();
+                Action::Select(vec![(current_idx, current_item.clone())])
+            } else if fuzzy_finder.is_multi_select()
+                && !fuzzy_finder.get_filtered_items().is_empty()
+            {
+                // In multi-select mode, if no items are selected, select the current item
+                let cursor_pos = fuzzy_finder.get_cursor_position();
+                let current_item = &fuzzy_finder.get_filtered_items()[cursor_pos];
+                let current_idx = fuzzy_finder.get_original_index(cursor_pos).unwrap();
+                Action::Select(vec![(current_idx, current_item.clone())])
             } else {
                 Action::Continue
             }
@@ -76,7 +85,7 @@ mod tests {
     fn test_action_enum_variants() {
         let continue_action = Action::Continue;
         let exit_action = Action::Exit;
-        let select_action = Action::Select(vec!["test".to_string()]);
+        let select_action = Action::Select(vec![(0, "test".to_string())]);
 
         assert_ne!(continue_action, exit_action);
         assert_ne!(continue_action, select_action);
@@ -237,7 +246,7 @@ mod tests {
         match action {
             Action::Select(selected) => {
                 assert_eq!(selected.len(), 1);
-                assert_eq!(selected[0], "apple");
+                assert_eq!(selected[0], (0, "apple".to_string()));
             }
             _ => panic!("Expected Select action"),
         }
@@ -258,7 +267,7 @@ mod tests {
         match action {
             Action::Select(selected) => {
                 assert_eq!(selected.len(), 1);
-                assert_eq!(selected[0], "apple");
+                assert_eq!(selected[0], (0, "apple".to_string()));
             }
             _ => panic!("Expected Select action"),
         }

@@ -16,7 +16,6 @@ pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
             let items: Vec<String> = content
                 .lines()
                 .map(|l| l.trim().to_string())
-                .filter(|l| !l.is_empty())
                 .collect();
             Ok(items)
         }
@@ -113,8 +112,8 @@ pub fn validate_tty_requirements() -> Result<(), String> {
 }
 
 /// Handle TUI results.
-pub fn handle_tui_results(selected: Vec<String>) -> Vec<String> {
-    selected
+pub fn handle_tui_results(selected: Vec<(usize, String)>) -> Vec<String> {
+    selected.into_iter().map(|(_, item)| item).collect()
 }
 
 /// Run async TUI with height configuration and validation using mpsc.
@@ -188,12 +187,15 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
         CliAction::RunAsyncTui {
             items,
             multi_select,
+            line_number,
             height,
             height_percentage,
             show_help_text,
         } => {
             // For async TUI, we need to run it in a tokio runtime
+            validate_tty_requirements()?;
             let rt = tokio::runtime::Runtime::new()?;
+            let items_for_check = items.clone();
             let result = rt.block_on(async {
                 // Create mpsc channel for items
                 let (sender, receiver) = create_items_channel();
@@ -241,12 +243,42 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                 let selected = run_tui_with_config(receiver, multi_select, config)
                     .await
                     .map_err(|e| e as Box<dyn std::error::Error>)?;
-                Ok::<Vec<String>, Box<dyn std::error::Error>>(selected)
+                Ok::<Vec<(usize, String)>, Box<dyn std::error::Error>>(selected)
             })?;
 
+            // Determine if we are reading from a single file to format output
+            let source_file = if items_for_check.len() == 1 {
+                let path_str = &items_for_check[0];
+                if looks_like_file_path(path_str)
+                    && !path_str.starts_with("dir:")
+                    && !path_str.starts_with("unix://")
+                    && !path_str.starts_with("http://")
+                    && !path_str.starts_with("https://")
+                {
+                    let path = std::path::Path::new(path_str);
+                    if path.exists() && path.is_file() {
+                        Some(path_str.clone())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             // Print each selected item
-            for item in result {
-                println!("{item}");
+            for (idx, item) in result {
+                if line_number {
+                    if let Some(ref file) = source_file {
+                        println!("{}:{1}", file, idx + 1);
+                    } else {
+                        println!("{}", idx + 1);
+                    }
+                } else {
+                    println!("{item}");
+                }
             }
             Ok(())
         }
@@ -282,7 +314,8 @@ mod tests {
         let result = read_items_from_file("test_items.txt");
         assert!(result.is_ok());
         let items = result.unwrap();
-        assert_eq!(items, vec!["item1", "item2", "item3"]);
+        // Updated expectation: empty lines are preserved
+        assert_eq!(items, vec!["item1", "item2", "", "item3"]);
 
         // Clean up
         fs::remove_file(&temp_file).unwrap();
@@ -312,7 +345,8 @@ mod tests {
         let result = read_items_from_file("test_whitespace.txt");
         assert!(result.is_ok());
         let items = result.unwrap();
-        assert_eq!(items, vec!["item1", "item2"]);
+        // Updated expectation: empty lines are preserved
+        assert_eq!(items, vec!["item1", "", "item2", ""]);
 
         // Clean up
         fs::remove_file(&temp_file).unwrap();
@@ -430,7 +464,7 @@ mod tests {
 
     #[test]
     fn test_handle_tui_results() {
-        let selected = vec!["result1".to_string(), "result2".to_string()];
+        let selected = vec![(0, "result1".to_string()), (1, "result2".to_string())];
         let result = handle_tui_results(selected);
         assert_eq!(result, vec!["result1", "result2"]);
     }

@@ -1,8 +1,8 @@
-use std::io::{stdin, stdout, IsTerminal};
+use std::io::{stderr, stdin, IsTerminal};
 
-/// Check if both stdin and stdout are TTYs.
+/// Check if stdin and stderr are TTYs.
 pub fn check_tty_requirements() -> bool {
-    stdin().is_terminal() && stdout().is_terminal()
+    stdin().is_terminal() && stderr().is_terminal()
 }
 
 #[cfg(test)]
@@ -28,14 +28,14 @@ mod tests {
     fn test_tty_streams() {
         // Test that we can check individual streams
         let stdin_is_tty = stdin().is_terminal();
-        let stdout_is_tty = stdout().is_terminal();
+        let stderr_is_tty = stderr().is_terminal();
 
         // Both should be boolean values
         let _stdin_is_tty = stdin_is_tty;
-        let _stdout_is_tty = stdout_is_tty;
+        let _stderr_is_tty = stderr_is_tty;
 
         // The combined result should match our function
-        let expected = stdin_is_tty && stdout_is_tty;
+        let expected = stdin_is_tty && stderr_is_tty;
         let actual = check_tty_requirements();
         assert_eq!(expected, actual);
     }

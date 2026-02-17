@@ -7,6 +7,8 @@ pub struct Config {
     pub input_source: String,
     /// Whether multi-select mode is enabled
     pub multi_select: bool,
+    /// Whether to output line numbers instead of content
+    pub line_number: bool,
     /// Direct items provided as command line arguments
     pub direct_items: Option<Vec<String>>,
 }
@@ -30,9 +32,11 @@ pub fn parse_args_from(args: &[String]) -> Result<Config, String> {
         let multi_select = args
             .iter()
             .any(|arg| arg == "--multi-select" || arg == "-m");
+        let line_number = args.iter().any(|arg| arg == "--line-number" || arg == "-n");
         return Ok(Config {
             input_source: "benchmark".to_string(),
             multi_select,
+            line_number,
             direct_items: None,
         });
     }
@@ -40,18 +44,23 @@ pub fn parse_args_from(args: &[String]) -> Result<Config, String> {
         let multi_select = args
             .iter()
             .any(|arg| arg == "--multi-select" || arg == "-m");
+        let line_number = args.iter().any(|arg| arg == "--line-number" || arg == "-n");
         return Ok(Config {
             input_source,
             multi_select,
+            line_number,
             direct_items: None,
         });
     }
     let multi_select = args
         .iter()
         .any(|arg| arg == "--multi-select" || arg == "-m");
+    let line_number = args.iter().any(|arg| arg == "--line-number" || arg == "-n");
     let direct_items: Vec<String> = args[1..]
         .iter()
-        .filter(|arg| *arg != "--multi-select" && *arg != "-m")
+        .filter(|arg| {
+            *arg != "--multi-select" && *arg != "-m" && *arg != "--line-number" && *arg != "-n"
+        })
         .cloned()
         .collect();
     if direct_items.is_empty() {
@@ -60,6 +69,7 @@ pub fn parse_args_from(args: &[String]) -> Result<Config, String> {
     Ok(Config {
         input_source: "direct".to_string(),
         multi_select,
+        line_number,
         direct_items: Some(direct_items),
     })
 }
@@ -72,8 +82,8 @@ pub fn parse_args() -> Result<Config, String> {
 
 /// Print usage information for the command line tool.
 pub fn print_usage() {
-    eprintln!("Usage: ff <input-source> [--multi-select] [--height <lines>] [--height-percentage <percent>]");
-    eprintln!("   or: ff <item1> [item2] [item3] ... [--multi-select] [--height <lines>] [--height-percentage <percent>]");
+    eprintln!("Usage: ff <input-source> [--multi-select] [--line-number] [--height <lines>] [--height-percentage <percent>]");
+    eprintln!("   or: ff <item1> [item2] [item3] ... [--multi-select] [--line-number] [--height <lines>] [--height-percentage <percent>]");
     eprintln!();
     eprintln!("Input Sources:");
     eprintln!("  file.txt              Read items from a file");
@@ -85,6 +95,10 @@ pub fn print_usage() {
     eprintln!();
     eprintln!("Options:");
     eprintln!("  --multi-select, -m    Allow selecting multiple items (default: single select)");
+    eprintln!(
+        "  --line-number, -n     Output the line number (1-based index) of the selected item(s)"
+    );
+    eprintln!("                        If input is a file, format is 'filename:line'");
     eprintln!(
         "  --height <lines>        Set TUI height to specific number of lines (non-fullscreen mode)"
     );
@@ -348,10 +362,12 @@ mod tests {
         let config = Config {
             input_source: "test".to_string(),
             multi_select: true,
+            line_number: false,
             direct_items: Some(vec!["item1".to_string(), "item2".to_string()]),
         };
         assert_eq!(config.input_source, "test");
         assert!(config.multi_select);
+        assert!(!config.line_number);
         assert_eq!(
             config.direct_items.as_ref().unwrap(),
             &vec!["item1".to_string(), "item2".to_string()]
@@ -363,11 +379,24 @@ mod tests {
         let config = Config {
             input_source: "file".to_string(),
             multi_select: false,
+            line_number: false,
             direct_items: None,
         };
         assert_eq!(config.input_source, "file");
         assert!(!config.multi_select);
+        assert!(!config.line_number);
         assert!(config.direct_items.is_none());
+    }
+
+    #[test]
+    fn test_config_struct_with_line_number() {
+        let config = Config {
+            input_source: "file".to_string(),
+            multi_select: false,
+            line_number: true,
+            direct_items: None,
+        };
+        assert!(config.line_number);
     }
 
     #[test]
