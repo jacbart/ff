@@ -1,3 +1,8 @@
+## [1.0.11] - 2026-02-17
+
+### 🚀 Features
+
+- Add line number flag and corresponding handling in cli args and tui
 ## [1.0.10] - 2026-02-07
 
 ### 🐛 Bug Fixes
