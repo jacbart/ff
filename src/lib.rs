@@ -188,7 +188,9 @@ impl FuzzyFinderSession {
         multi_select: bool,
     ) -> (
         Self,
-        impl std::future::Future<Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>>,
+        impl std::future::Future<
+            Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>,
+        >,
     ) {
         Self::with_config(multi_select, TuiConfig::default())
     }
@@ -199,7 +201,9 @@ impl FuzzyFinderSession {
         config: TuiConfig,
     ) -> (
         Self,
-        impl std::future::Future<Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>>,
+        impl std::future::Future<
+            Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>,
+        >,
     ) {
         let (sender, receiver) = tui::create_items_channel();
         (
@@ -270,7 +274,9 @@ impl FuzzyFinderWithIndicators {
         multi_select: bool,
     ) -> (
         Self,
-        impl std::future::Future<Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>>,
+        impl std::future::Future<
+            Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>,
+        >,
     ) {
         Self::with_config(multi_select, TuiConfig::default())
     }
@@ -281,7 +287,9 @@ impl FuzzyFinderWithIndicators {
         config: TuiConfig,
     ) -> (
         Self,
-        impl std::future::Future<Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>>,
+        impl std::future::Future<
+            Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>,
+        >,
     ) {
         let (sender, receiver) = tui::create_command_channel();
         (

@@ -165,10 +165,7 @@ async fn test_toggle_selection_single_mode() {
         FuzzyFinder::with_items_async(vec!["apple".to_string(), "banana".to_string()], false).await;
     finder.toggle_selection();
 
-    assert_eq!(
-        finder.get_selected_items(),
-        vec![(0, "apple".to_string())]
-    );
+    assert_eq!(finder.get_selected_items(), vec![(0, "apple".to_string())]);
 }
 
 #[tokio::test]

@@ -20,6 +20,19 @@ pub enum CliAction {
         /// Whether to show help text
         show_help_text: bool,
     },
+    /// Run TUI with piped stdin input
+    RunAsyncTuiFromStdin {
+        /// Whether multi-select mode is enabled
+        multi_select: bool,
+        /// Whether to output line numbers instead of content
+        line_number: bool,
+        /// Fixed height in lines
+        height: Option<u16>,
+        /// Height as percentage of terminal
+        height_percentage: Option<f32>,
+        /// Whether to show help text
+        show_help_text: bool,
+    },
     /// Error with message
     Error(String),
 }
@@ -35,21 +48,12 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {
         return CliAction::ShowHelp;
     }
-    if args.len() < 2 {
-        return CliAction::Error("Missing required argument: input-source or items".to_string());
-    }
-    let input_source = args[1].clone();
-    if input_source.starts_with('-') && input_source != "-" {
-        return CliAction::Error(format!(
-            "Invalid input source: '{input_source}'. Did you mean to use a flag?"
-        ));
-    }
+
     let multi_select = args
         .iter()
         .any(|arg| arg == "--multi-select" || arg == "-m");
     let line_number = args.iter().any(|arg| arg == "--line-number" || arg == "-n");
 
-    // Parse height options
     let mut height: Option<u16> = None;
     let mut height_percentage: Option<f32> = None;
     let mut show_help_text = false;
@@ -120,6 +124,28 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                 "Missing height percentage value after --height-percentage".to_string(),
             );
         }
+    }
+
+    // Check if stdin is piped - if so, use that as input source
+    if super::tty::is_stdin_piped() {
+        return CliAction::RunAsyncTuiFromStdin {
+            multi_select,
+            line_number,
+            height,
+            height_percentage,
+            show_help_text,
+        };
+    }
+
+    if args.len() < 2 {
+        return CliAction::Error("Missing required argument: input-source or items".to_string());
+    }
+
+    let input_source = args[1].clone();
+    if input_source.starts_with('-') && input_source != "-" {
+        return CliAction::Error(format!(
+            "Invalid input source: '{input_source}'. Did you mean to use a flag?"
+        ));
     }
 
     // Check for special input sources
@@ -239,13 +265,17 @@ mod tests {
     #[test]
     fn detects_missing_argument() {
         let args = to_args(&["ff"]);
-        assert!(matches!(plan_cli_action(&args), CliAction::Error(_)));
+        if !crate::cli::tty::is_stdin_piped() {
+            assert!(matches!(plan_cli_action(&args), CliAction::Error(_)));
+        }
     }
 
     #[test]
     fn detects_invalid_input_source() {
         let args = to_args(&["ff", "-bad"]);
-        assert!(matches!(plan_cli_action(&args), CliAction::Error(_)));
+        if !crate::cli::tty::is_stdin_piped() {
+            assert!(matches!(plan_cli_action(&args), CliAction::Error(_)));
+        }
     }
 
     #[test]

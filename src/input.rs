@@ -1,3 +1,4 @@
+use std::io::IsTerminal;
 use std::path::Path;
 use tokio::fs;
 use tokio::io::{AsyncReadExt, BufReader};
@@ -37,12 +38,60 @@ pub fn process_stdin_content(content: &str) -> Result<Vec<String>, String> {
     let mut items = Vec::new();
     for line in content.lines() {
         let trimmed = line.trim();
-        items.push(trimmed.to_string());
+        if !trimmed.is_empty() {
+            items.push(trimmed.to_string());
+        }
     }
     if items.is_empty() {
         return Err("No items found in stdin".to_string());
     }
     Ok(items)
+}
+
+/// Read piped stdin synchronously before async runtime.
+pub fn read_piped_stdin() -> Result<Vec<String>, String> {
+    use std::io::{stdin, Read};
+    let mut input = String::new();
+    let mut stdin = stdin();
+    if stdin.is_terminal() {
+        return Ok(Vec::new());
+    }
+    stdin
+        .read_to_string(&mut input)
+        .map_err(|e| format!("Failed to read stdin: {e}"))?;
+    Ok(process_stdin_content(&input)?)
+}
+
+/// Reopen stdin from /dev/tty so crossterm can read keyboard events
+/// after piped stdin has been consumed.
+///
+/// This replaces file descriptor 0 (stdin) with a fresh fd opened from /dev/tty,
+/// which is the controlling terminal. After this call, crossterm's enable_raw_mode()
+/// and event::poll()/event::read() will work normally.
+#[cfg(unix)]
+pub fn reopen_stdin_from_tty() -> Result<(), String> {
+    use std::os::unix::io::IntoRawFd;
+
+    let tty_file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/tty")
+        .map_err(|e| format!("Failed to open /dev/tty: {e}"))?;
+
+    let tty_fd = tty_file.into_raw_fd();
+
+    // Replace stdin (fd 0) with the /dev/tty file descriptor
+    let result = unsafe { libc::dup2(tty_fd, libc::STDIN_FILENO) };
+    if result == -1 {
+        // Close the fd we opened since dup2 failed
+        unsafe { libc::close(tty_fd) };
+        return Err("Failed to dup2 /dev/tty onto stdin".to_string());
+    }
+
+    // Close the original fd (dup2 made a copy onto fd 0)
+    unsafe { libc::close(tty_fd) };
+
+    Ok(())
 }
 
 /// Process content as if it came from a file.

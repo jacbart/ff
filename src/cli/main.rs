@@ -5,7 +5,7 @@ use crate::cli::planner::{plan_cli_action, CliAction};
 use crate::cli::tty::check_tty_requirements;
 use crate::config;
 use crate::get_build_info;
-use crate::input::{read_input, send_input_to_channel};
+use crate::input::{read_input, read_piped_stdin, reopen_stdin_from_tty, send_input_to_channel};
 use crate::tui::ui::{create_items_channel, run_tui_with_config};
 use crate::tui::TuiConfig;
 
@@ -13,10 +13,7 @@ use crate::tui::TuiConfig;
 pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {
     match fs::read_to_string(file_path) {
         Ok(content) => {
-            let items: Vec<String> = content
-                .lines()
-                .map(|l| l.trim().to_string())
-                .collect();
+            let items: Vec<String> = content.lines().map(|l| l.trim().to_string()).collect();
             Ok(items)
         }
         Err(e) => Err(format!("Failed to read file: {e}")),
@@ -276,6 +273,70 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                     } else {
                         println!("{}", idx + 1);
                     }
+                } else {
+                    println!("{item}");
+                }
+            }
+            Ok(())
+        }
+        CliAction::RunAsyncTuiFromStdin {
+            multi_select,
+            line_number,
+            height,
+            height_percentage,
+            show_help_text,
+        } => {
+            validate_tty_requirements()?;
+
+            let items = read_piped_stdin().map_err(|e| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                    as Box<dyn std::error::Error>
+            })?;
+
+            if items.is_empty() {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::InvalidData,
+                    "No items provided via stdin",
+                )));
+            }
+
+            // Reopen stdin from /dev/tty so crossterm can read keyboard events.
+            // Piped stdin has been fully consumed above; now we need a real TTY
+            // on fd 0 for enable_raw_mode() and event::poll()/event::read().
+            reopen_stdin_from_tty().map_err(|e| {
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
+                    as Box<dyn std::error::Error>
+            })?;
+
+            let rt = tokio::runtime::Runtime::new()?;
+            let result = rt.block_on(async {
+                let (sender, receiver) = create_items_channel();
+
+                let items_clone = items.clone();
+                tokio::spawn(async move {
+                    for item in items_clone {
+                        let _ = sender.send(item).await;
+                    }
+                });
+
+                let config = TuiConfig {
+                    fullscreen: height.is_none() && height_percentage.is_none(),
+                    height,
+                    height_percentage,
+                    show_help_text,
+                    show_loading_indicator: true,
+                    loading_message: None,
+                    ready_message: None,
+                };
+                let selected = run_tui_with_config(receiver, multi_select, config)
+                    .await
+                    .map_err(|e| e as Box<dyn std::error::Error>)?;
+                Ok::<Vec<(usize, String)>, Box<dyn std::error::Error>>(selected)
+            })?;
+
+            for (idx, item) in result {
+                if line_number {
+                    println!("{}", idx + 1);
                 } else {
                     println!("{item}");
                 }

@@ -84,8 +84,10 @@ pub fn parse_args() -> Result<Config, String> {
 pub fn print_usage() {
     eprintln!("Usage: ff <input-source> [--multi-select] [--line-number] [--height <lines>] [--height-percentage <percent>]");
     eprintln!("   or: ff <item1> [item2] [item3] ... [--multi-select] [--line-number] [--height <lines>] [--height-percentage <percent>]");
+    eprintln!("   or: <command> | ff [--multi-select] [--line-number] [--height <lines>] [--height-percentage <percent>]");
     eprintln!();
     eprintln!("Input Sources:");
+    eprintln!("  <stdin>               Pipe input from another command");
     eprintln!("  file.txt              Read items from a file");
     eprintln!("  ./src/                Read files from a directory");
     eprintln!("  unix:///path/socket   Read from Unix socket");
@@ -134,7 +136,10 @@ pub fn print_usage() {
     eprintln!("  ff apple banana cherry -m      # Direct items, multi-select");
     eprintln!("  ff file.txt --height 10        # Non-fullscreen mode, 10 lines high");
     eprintln!("  ff file.txt --height-percentage 50  # Non-fullscreen mode, 50% of terminal");
-    eprintln!("  ff --version                    # Show version information");
+    eprintln!("  cat file.txt | ff              # Pipe file contents");
+    eprintln!("  cat file.txt | ff -m           # Pipe file contents, multi-select");
+    eprintln!("  ls -la | ff                    # Pipe command output");
+    eprintln!("  ff --version                   # Show version information");
 }
 
 #[cfg(test)]
