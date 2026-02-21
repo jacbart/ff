@@ -1,3 +1,8 @@
+## [1.0.12] - 2026-02-21
+
+### 🚀 Features
+
+- Enable pipeline with use-dev-tty
 ## [1.0.11] - 2026-02-17
 
 ### 🚀 Features
