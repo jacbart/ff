@@ -39,10 +39,7 @@ pub enum CliAction {
 
 /// Plan the CLI action based on command line arguments.
 pub fn plan_cli_action(args: &[String]) -> CliAction {
-    if args
-        .iter()
-        .any(|arg| arg == "--version" || arg == "-V" || arg == "-v")
-    {
+    if args.iter().any(|arg| arg == "--version" || arg == "-V") {
         return CliAction::ShowVersion;
     }
     if args.iter().any(|arg| arg == "--help" || arg == "-h") {

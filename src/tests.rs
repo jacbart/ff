@@ -72,10 +72,12 @@ fn test_is_leap_year() {
 #[test]
 fn test_version_flag_detection() {
     // Test that version flags are correctly identified
-    let version_flags = vec!["--version", "-V", "-v"];
-    for flag in version_flags {
-        assert!(flag == "--version" || flag == "-V" || flag == "-v");
+    let version_flags = vec!["--version", "-V"];
+    for flag in &version_flags {
+        assert!(*flag == "--version" || *flag == "-V");
     }
+    // -v is no longer a version flag
+    assert!(!version_flags.contains(&"-v"));
 }
 
 #[test]
@@ -251,9 +253,7 @@ fn test_argument_parsing_logic() {
     let args = ["program", "file.txt", "--multi-select"];
 
     // Test version flag detection
-    let has_version_flag = args
-        .iter()
-        .any(|arg| *arg == "--version" || *arg == "-V" || *arg == "-v");
+    let has_version_flag = args.iter().any(|arg| *arg == "--version" || *arg == "-V");
     assert!(!has_version_flag);
 
     // Test multi-select flag detection

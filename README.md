@@ -1,16 +1,6 @@
-# FF - Fast Fuzzy Finder
+# ff - Fast Fuzzy Finder
 
-A high-performance fuzzy finder. **Fast, not precise** - designed for quick filtering rather than exact matching.
-
-## Features
-
-- **Fast fuzzy matching** - Quick filtering, not precise matching
-- **Case-insensitive search** by default
-- **Multi-select support** for selecting multiple items
-- **TUI interface** with keyboard navigation
-- **Flexible input** - files, stdin, or direct items
-- **Loading indicator** - Animated spinner while items are being loaded
-- **Per-item indicators** - Dynamic status indicators for each item (library only)
+A fast fuzzy finder for the terminal. Prioritizes speed over precision -- designed for quick interactive filtering.
 
 ## Installation
 
@@ -27,52 +17,91 @@ nix build
 
 ## Usage
 
-### Basic Examples
+```
+ff [OPTIONS] [INPUT]
+<command> | ff [OPTIONS]
+```
+
+### Options
+
+| Flag | Description |
+|------|-------------|
+| `-m`, `--multi-select` | Enable multi-select mode |
+| `-n`, `--line-number` | Output line numbers (`file:line` for file input) |
+| `--height <N>` | Set TUI height in lines (non-fullscreen) |
+| `--height-percentage <N>` | Set TUI height as % of terminal (non-fullscreen) |
+| `-h`, `--help` | Show help message |
+| `-V`, `--version` | Show version information |
+
+### Examples
 
 ```bash
-# Single select from file
+# Select from a file
 ff items.txt
 
-# Multi-select from file
-ff items.txt --multi-select
+# Multi-select from a file
+ff items.txt -m
 
-# Direct items
+# Select from a directory listing
+ff ./src/
+
+# Inline items
 ff apple banana cherry
 
-# Height options (non-fullscreen)
+# Piped input
+ls | ff
+cat items.txt | ff -m
+
+# Non-fullscreen mode
 ff items.txt --height 10
 ff items.txt --height-percentage 50
 ```
 
-### Library Usage
+### Input Sources
 
-#### Basic Session
+ff accepts input from multiple sources:
+
+- **Files** -- read lines from a file (`ff items.txt`)
+- **Directories** -- list entries in a directory (`ff ./src/`)
+- **Stdin** -- pipe output from another command (`ls | ff`)
+- **Inline items** -- pass items directly as arguments (`ff a b c`)
+- **URLs** -- read from HTTP/HTTPS endpoints or Unix sockets
+
+## Controls
+
+| Key | Action |
+|-----|--------|
+| Type | Filter items in real-time |
+| Up/Down | Navigate results |
+| Enter | Select (single) or confirm selection (multi) |
+| Tab/Space | Toggle selection (multi-select mode) |
+| Esc, Ctrl+C, Ctrl+Q | Exit without selection |
+
+## Library Usage
+
+ff can also be used as a Rust library for embedding fuzzy selection in your own tools.
+
+### Basic Session
 
 ```rust
 use ff::FuzzyFinderSession;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    // Start the session
     let (session, tui_future) = FuzzyFinderSession::new(true);
-
-    // Spawn the TUI runner
     let runner = tokio::spawn(tui_future);
 
-    // Push items asynchronously
     session.add("apple").await?;
     session.add("banana").await?;
     session.add_batch(vec!["cherry", "date"]).await?;
 
-    // Wait for the user to make a selection
     let result = runner.await??;
-    
     println!("Selected: {:?}", result);
     Ok(())
 }
 ```
 
-#### With Per-Item Indicators
+### With Per-Item Indicators
 
 For tasks that need status indicators on each item (e.g., showing progress):
 
@@ -84,16 +113,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let (session, tui_future) = FuzzyFinderWithIndicators::new(true);
     let runner = tokio::spawn(tui_future);
 
-    // Add items with spinner indicators
     session.add_with_indicator("task1", ItemIndicator::Spinner).await?;
     session.add_with_indicator("task2", ItemIndicator::Spinner).await?;
-    session.add("task3").await?;  // No indicator
-    
-    // Update indicators as tasks complete
+    session.add("task3").await?;
+
     session.set_indicator("task1", ItemIndicator::Success).await?;
     session.set_indicator("task2", ItemIndicator::Error).await?;
-    
-    // Optionally set global status
     session.set_global_status(GlobalStatus::Ready(Some("All done!".into()))).await?;
 
     let result = runner.await??;
@@ -103,27 +128,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 ```
 
 **Available indicators:**
-- `ItemIndicator::Spinner` - Animated spinner
-- `ItemIndicator::Success` - Green checkmark
-- `ItemIndicator::Error` - Red X
-- `ItemIndicator::Warning` - Yellow warning
-- `ItemIndicator::Text(String)` - Custom text
-- `ItemIndicator::ColoredText(String, Color)` - Custom colored text
-- `ItemIndicator::None` - No indicator
+- `ItemIndicator::Spinner` -- animated spinner
+- `ItemIndicator::Success` -- green checkmark
+- `ItemIndicator::Error` -- red X
+- `ItemIndicator::Warning` -- yellow warning
+- `ItemIndicator::Text(String)` -- custom text
+- `ItemIndicator::ColoredText(String, Color)` -- custom colored text
+- `ItemIndicator::None` -- no indicator
 
-## TUI Controls
-
-- **Type to search** - Filter items in real-time
-- **↑/↓ arrows** - Navigate through results
-- **Enter** - Select item (single mode) or confirm selection (multi mode)
-- **Tab** - Toggle selection and move to next item (multi-select mode)
-- **Space** - Toggle selection (multi-select mode)
-- **Esc** - Exit without selection
-- **Ctrl+Q/Ctrl+C** - Exit without selection
-
-## Configuration
-
-The `TuiConfig` struct allows customization:
+### Configuration
 
 ```rust
 use ff::{TuiConfig, FuzzyFinderSession};
@@ -141,14 +154,6 @@ let config = TuiConfig {
 let (session, tui_future) = FuzzyFinderSession::with_config(true, config);
 ```
 
-## Performance
-
-Optimized for speed over precision:
-- **Substring matching** for immediate results
-- **Character sequence matching** for flexible searches
-- **Query caching** for repeated searches
-- **Case-insensitive** by default
-
 ## License
 
-MIT License - see LICENSE file for details. 
+MIT License - see LICENSE file for details.

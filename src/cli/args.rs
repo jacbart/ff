@@ -2,8 +2,7 @@ use std::path::Path;
 
 /// Check if any version flag is present in the arguments.
 pub fn has_version_flag(args: &[String]) -> bool {
-    args.iter()
-        .any(|arg| arg == "--version" || arg == "-V" || arg == "-v")
+    args.iter().any(|arg| arg == "--version" || arg == "-V")
 }
 
 /// Check if any multi-select flag is present in the arguments.
@@ -41,15 +40,15 @@ mod tests {
     }
 
     #[test]
-    fn test_has_version_flag_short_v() {
-        let args = vec!["-v".to_string()];
+    fn test_has_version_flag_short_v_upper() {
+        let args = vec!["-V".to_string()];
         assert!(has_version_flag(&args));
     }
 
     #[test]
-    fn test_has_version_flag_short_v_upper() {
-        let args = vec!["-V".to_string()];
-        assert!(has_version_flag(&args));
+    fn test_lowercase_v_not_version_flag() {
+        let args = vec!["-v".to_string()];
+        assert!(!has_version_flag(&args));
     }
 
     #[test]
