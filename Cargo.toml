@@ -1,6 +1,6 @@
 [package]
 name = "ff"
-version = "1.0.12"
+version = "1.0.13"
 edition = "2021"
 description = "A fast fuzzy finder for the terminal"
 authors = ["jacbart"]

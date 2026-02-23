@@ -1,3 +1,8 @@
+## [1.0.13] - 2026-02-23
+
+### 🚜 Refactor
+
+- Slim the help menu and update the readme
 ## [1.0.12] - 2026-02-21
 
 ### 🚀 Features
