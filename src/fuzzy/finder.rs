@@ -155,6 +155,16 @@ impl FuzzyFinder {
         self.cursor_position = wrapped_position as usize;
     }
 
+    /// Move cursor to an absolute position (clamped to valid range)
+    pub fn move_cursor_to(&mut self, position: usize) {
+        let len = self.filtered_items.len();
+        if len == 0 {
+            self.cursor_position = 0;
+        } else {
+            self.cursor_position = position.min(len - 1);
+        }
+    }
+
     /// Move cursor up or down without wrapping (clamps to bounds)
     /// Returns true if the cursor actually moved, false if it was already at the boundary
     pub fn move_cursor_clamped(&mut self, direction: i32) -> bool {

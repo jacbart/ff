@@ -147,6 +147,15 @@ pub use tui::create_command_channel;
 /// - `Err(e)`: An error occurred during TUI operation
 pub use tui::run_tui_with_indicators;
 
+/// Preview state for the fuzzy finder TUI.
+pub use tui::PreviewState;
+
+/// Result of a preview command execution.
+pub use tui::PreviewResult;
+
+/// Preview rule: command template + optional extension filter.
+pub use tui::PreviewRule;
+
 /// A session handle for the fuzzy finder, allowing asynchronous item ingestion.
 ///
 /// This struct provides a high-level interface to the fuzzy finder TUI,

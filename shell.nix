@@ -9,10 +9,14 @@
 pkgs.mkShell {
   name = "${pname}-${version}";
   buildInputs = with pkgs; [
-    (rustVersion.override { extensions = [ "rust-src" ]; })
+    (rustVersion.override {
+      extensions = [
+        "rust-src"
+        "rust-analyzer"
+      ];
+    })
     bacon
     lldb
-    rust-analyzer
     git-cliff
   ];
   RUST_LOG = "debug";

@@ -16,7 +16,7 @@
     let
       pname = "ff";
       version = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).package.version;
-      projectRustVersion = "1.92.0";
+      projectRustVersion = "1.94.1";
       inherit (nixpkgs) lib;
       allSystems = [
         "x86_64-linux"
@@ -70,5 +70,7 @@
         }
       );
       hydraJobs."${pname}" = forAllSystems ({ pkgs }: self.packages.${pkgs.stdenv.system}.default);
+      # nix fmt
+      formatter = nixpkgs.lib.genAttrs allSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-tree);
     };
 }

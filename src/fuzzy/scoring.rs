@@ -35,6 +35,15 @@ mod scores {
     pub const GAP_MAX: i32 = -20;
 }
 
+/// Match quality tier — higher variants always outrank lower ones.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum MatchTier {
+    Fuzzy,
+    Substring,
+    Prefix,
+    Exact,
+}
+
 /// Result of a successful fuzzy match
 #[derive(Debug, Clone)]
 pub struct MatchResult {
@@ -42,6 +51,8 @@ pub struct MatchResult {
     pub score: i32,
     /// Indices of matched characters in the original item (for highlighting)
     pub positions: Vec<usize>,
+    /// Match quality tier
+    pub tier: MatchTier,
 }
 
 /// Check if a character is a word boundary indicator
@@ -93,6 +104,7 @@ pub fn score_match_with_original(
         return Some(MatchResult {
             score: 0,
             positions: Vec::new(),
+            tier: MatchTier::Fuzzy,
         });
     }
 
@@ -107,14 +119,20 @@ pub fn score_match_with_original(
         return Some(MatchResult {
             score: scores::EXACT,
             positions,
+            tier: MatchTier::Exact,
         });
     }
 
     // Fast path: prefix match
     if item.starts_with(query) {
         let positions: Vec<usize> = (0..query.chars().count()).collect();
-        let score = scores::PREFIX + (query.len() as i32 * scores::CONSECUTIVE);
-        return Some(MatchResult { score, positions });
+        let score = (scores::PREFIX + (query.len() as i32 * scores::CONSECUTIVE))
+            .min(scores::EXACT - 1);
+        return Some(MatchResult {
+            score,
+            positions,
+            tier: MatchTier::Prefix,
+        });
     }
 
     // Fast path: check if item contains query as substring
@@ -125,10 +143,14 @@ pub fn score_match_with_original(
 
         // Score based on position (earlier is better)
         let position_bonus = ((item.len() - start_idx) as i32 * 2).min(100);
-        let score =
-            scores::PREFIX / 2 + (query.len() as i32 * scores::CONSECUTIVE) + position_bonus;
+        let score = (scores::PREFIX / 2 + (query.len() as i32 * scores::CONSECUTIVE) + position_bonus)
+            .min(scores::PREFIX - 1);
 
-        return Some(MatchResult { score, positions });
+        return Some(MatchResult {
+            score,
+            positions,
+            tier: MatchTier::Substring,
+        });
     }
 
     // Full fuzzy matching with optimal position finding
@@ -143,7 +165,11 @@ pub fn score_match_with_original(
     let score =
         calculate_score_for_positions(&positions, &item_chars, &original_chars, &query_chars);
 
-    Some(MatchResult { score, positions })
+    Some(MatchResult {
+        score: score.min(scores::PREFIX / 2 - 1),
+        positions,
+        tier: MatchTier::Fuzzy,
+    })
 }
 
 /// Find optimal match positions that maximize consecutive runs.
@@ -384,10 +410,32 @@ pub fn score_match_case_insensitive(item: &str, query: &str) -> Option<MatchResu
     score_match_with_original(&item_lower, item, &query_lower)
 }
 
+/// Strip ANSI escape sequences from a string
+fn strip_ansi_sequences(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let mut chars = s.chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\x1b' {
+            if chars.next() == Some('[') {
+                while let Some(next) = chars.next() {
+                    if next.is_ascii_alphabetic() || matches!(next, '@' | '~' | '_' | '`') {
+                        break;
+                    }
+                }
+            }
+        } else {
+            result.push(ch);
+        }
+    }
+    result
+}
+
 /// Batch score multiple items against a query.
 ///
 /// Returns a vector of (index, MatchResult) for items that match,
 /// sorted by score descending.
+/// ANSI escape sequences are stripped before matching so that colored
+/// items (e.g. from `eza --color=always`) still match correctly.
 pub fn score_batch(items: &[String], query: &str) -> Vec<(usize, MatchResult)> {
     if query.is_empty() {
         // Return all items with zero score, preserving order
@@ -400,6 +448,7 @@ pub fn score_batch(items: &[String], query: &str) -> Vec<(usize, MatchResult)> {
                     MatchResult {
                         score: 0,
                         positions: Vec::new(),
+                        tier: MatchTier::Fuzzy,
                     },
                 )
             })
@@ -412,13 +461,21 @@ pub fn score_batch(items: &[String], query: &str) -> Vec<(usize, MatchResult)> {
         .iter()
         .enumerate()
         .filter_map(|(idx, item)| {
-            let item_lower = item.to_lowercase();
-            score_match_with_original(&item_lower, item, &query_lower).map(|result| (idx, result))
+            let clean = strip_ansi_sequences(item);
+            let clean_lower = clean.to_lowercase();
+            score_match_with_original(&clean_lower, &clean, &query_lower).map(|result| {
+                (idx, result)
+            })
         })
         .collect();
 
-    // Sort by score descending
-    results.sort_unstable_by(|a, b| b.1.score.cmp(&a.1.score));
+    // Stable tiered sort: tier desc, score desc, original index asc
+    results.sort_by(|a, b| {
+        b.1.tier
+            .cmp(&a.1.tier)
+            .then_with(|| b.1.score.cmp(&a.1.score))
+            .then_with(|| a.0.cmp(&b.0))
+    });
 
     results
 }
@@ -697,5 +754,54 @@ mod tests {
 
         // Both 0,1 and 5,6 are consecutive, but 0,1 is earlier (higher position bonus)
         assert_eq!(positions, vec![0, 1]);
+    }
+
+    #[test]
+    fn test_tier_exact_beats_prefix() {
+        let exact = score_match("ff", "ff").unwrap();
+        let prefix = score_match("ffoo", "ff").unwrap();
+        assert!(exact.tier > prefix.tier);
+        assert!(exact.score > prefix.score);
+    }
+
+    #[test]
+    fn test_tier_prefix_beats_substring() {
+        let prefix = score_match("foobar", "foo").unwrap();
+        let substring = score_match("xxfooyy", "foo").unwrap();
+        assert!(prefix.tier > substring.tier);
+        assert!(prefix.score > substring.score);
+    }
+
+    #[test]
+    fn test_tier_substring_beats_fuzzy() {
+        let substring = score_match("xxfooyy", "foo").unwrap();
+        let fuzzy = score_match("f_x_o_o", "foo").unwrap();
+        assert!(substring.tier > fuzzy.tier);
+        assert!(substring.score > fuzzy.score);
+    }
+
+    #[test]
+    fn test_stable_sort_preserves_order() {
+        let items = vec![
+            "aaa".to_string(),
+            "bbb".to_string(),
+            "ccc".to_string(),
+        ];
+        let results = score_batch(&items, "");
+        // Empty query: all score 0, same tier, should preserve original order
+        assert_eq!(results[0].0, 0);
+        assert_eq!(results[1].0, 1);
+        assert_eq!(results[2].0, 2);
+    }
+
+    #[test]
+    fn test_long_prefix_does_not_beat_exact() {
+        // A very long prefix should still score below exact
+        let long_prefix_item = "a".repeat(200);
+        let exact = score_match(&long_prefix_item, &long_prefix_item).unwrap();
+        let prefix = score_match(&(long_prefix_item.clone() + "x"), &long_prefix_item).unwrap();
+        assert_eq!(exact.tier, MatchTier::Exact);
+        assert_eq!(prefix.tier, MatchTier::Prefix);
+        assert!(exact.score > prefix.score);
     }
 }

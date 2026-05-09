@@ -188,6 +188,8 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
             height,
             height_percentage,
             show_help_text,
+            preview_rules,
+            preview_auto,
         } => {
             // For async TUI, we need to run it in a tokio runtime
             validate_tty_requirements()?;
@@ -236,6 +238,8 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                     show_loading_indicator: true,
                     loading_message: None,
                     ready_message: None,
+                    preview_rules,
+                    preview_auto,
                 };
                 let selected = run_tui_with_config(receiver, multi_select, config)
                     .await
@@ -285,6 +289,8 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
             height,
             height_percentage,
             show_help_text,
+            preview_rules,
+            preview_auto,
         } => {
             validate_tty_requirements()?;
 
@@ -327,6 +333,8 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
                     show_loading_indicator: true,
                     loading_message: None,
                     ready_message: None,
+                    preview_rules,
+                    preview_auto,
                 };
                 let selected = run_tui_with_config(receiver, multi_select, config)
                     .await

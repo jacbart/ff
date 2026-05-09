@@ -1,9 +1,11 @@
-{ pkgs ? import <nixpkgs> {}
-, rustVersion
-, self
-, version
-, pname
-, ... }:
+{
+  pkgs ? import <nixpkgs> { },
+  rustVersion,
+  self,
+  version,
+  pname,
+  ...
+}:
 let
   inherit (pkgs) lib;
   # outputHashes = { "package-version" = "sha256-xxx"; };

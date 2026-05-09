@@ -19,6 +19,10 @@ pub enum CliAction {
         height_percentage: Option<f32>,
         /// Whether to show help text
         show_help_text: bool,
+        /// Preview rules (scanned in order; empty exts = default)
+        preview_rules: Vec<crate::tui::preview::PreviewRule>,
+        /// Auto-show preview on cursor move
+        preview_auto: bool,
     },
     /// Run TUI with piped stdin input
     RunAsyncTuiFromStdin {
@@ -32,6 +36,10 @@ pub enum CliAction {
         height_percentage: Option<f32>,
         /// Whether to show help text
         show_help_text: bool,
+        /// Preview rules (scanned in order; empty exts = default)
+        preview_rules: Vec<crate::tui::preview::PreviewRule>,
+        /// Auto-show preview on cursor move
+        preview_auto: bool,
     },
     /// Error with message
     Error(String),
@@ -54,6 +62,9 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
     let mut height: Option<u16> = None;
     let mut height_percentage: Option<f32> = None;
     let mut show_help_text = false;
+    let mut preview_rules: Vec<crate::tui::preview::PreviewRule> = Vec::new();
+    let mut preview_auto = false;
+    let mut has_default = false;
 
     for (i, arg) in args.iter().enumerate() {
         if arg == "--height" && i + 1 < args.len() {
@@ -108,10 +119,44 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             }
         } else if arg == "--help-text" {
             show_help_text = true;
+        } else if (arg == "--preview" || arg == "-p") && i + 1 < args.len() {
+            match crate::tui::preview::PreviewRule::parse(&args[i + 1]) {
+                Ok(rule) => {
+                    if rule.exts.is_empty() {
+                        if has_default {
+                            return CliAction::Error(
+                                "Multiple default preview rules specified. Only one default rule is allowed.".to_string(),
+                            );
+                        }
+                        has_default = true;
+                    }
+                    preview_rules.push(rule);
+                }
+                Err(e) => return CliAction::Error(e),
+            }
+        } else if arg.starts_with("--preview=") {
+            if let Some(value) = arg.strip_prefix("--preview=") {
+                match crate::tui::preview::PreviewRule::parse(value) {
+                    Ok(rule) => {
+                        if rule.exts.is_empty() {
+                            if has_default {
+                                return CliAction::Error(
+                                    "Multiple default preview rules specified. Only one default rule is allowed.".to_string(),
+                                );
+                            }
+                            has_default = true;
+                        }
+                        preview_rules.push(rule);
+                    }
+                    Err(e) => return CliAction::Error(e),
+                }
+            }
+        } else if arg == "--preview-auto" {
+            preview_auto = true;
         }
     }
 
-    // Check for missing height values
+    // Check for missing values
     for (i, arg) in args.iter().enumerate() {
         if arg == "--height" && i + 1 >= args.len() {
             return CliAction::Error("Missing height value after --height".to_string());
@@ -120,6 +165,9 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             return CliAction::Error(
                 "Missing height percentage value after --height-percentage".to_string(),
             );
+        }
+        if (arg == "--preview" || arg == "-p") && i + 1 >= args.len() {
+            return CliAction::Error("Missing preview command after --preview".to_string());
         }
     }
 
@@ -131,6 +179,8 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             height,
             height_percentage,
             show_help_text,
+            preview_rules,
+            preview_auto,
         };
     }
 
@@ -157,6 +207,8 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             height,
             height_percentage,
             show_help_text,
+            preview_rules,
+            preview_auto,
         };
     }
 
@@ -171,6 +223,8 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                 height,
                 height_percentage,
                 show_help_text,
+                preview_rules,
+                preview_auto,
             };
         } else {
             return CliAction::RunAsyncTui {
@@ -180,6 +234,8 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
                 height,
                 height_percentage,
                 show_help_text,
+                preview_rules,
+                preview_auto,
             };
         }
     }
@@ -219,6 +275,18 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
             continue;
         }
 
+        if *arg == "--preview-auto" {
+            continue;
+        }
+
+        if *arg == "--preview" || arg.starts_with("--preview=") {
+            continue;
+        }
+
+        if *arg == "--preview" || *arg == "-p" {
+            continue;
+        }
+
         direct_items.push(arg.clone());
     }
     if direct_items.is_empty() {
@@ -232,6 +300,8 @@ pub fn plan_cli_action(args: &[String]) -> CliAction {
         height,
         height_percentage,
         show_help_text,
+        preview_rules,
+        preview_auto,
     }
 }
 
