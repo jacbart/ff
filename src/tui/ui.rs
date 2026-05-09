@@ -275,11 +275,6 @@ async fn run_interactive_tui(
     let mut last_spinner_update = Instant::now();
     let spinner_interval = std::time::Duration::from_millis(80);
 
-    // Multi-key state for vim-style 'gg'
-    let mut pending_g = false;
-    let mut pending_g_timer = Instant::now();
-    const PENDING_G_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
-
     // Create screen buffer for double-buffered rendering
     let (term_width, _) = size()?;
     let mut screen_buffer = ScreenBuffer::new(term_width, tui_height);
@@ -460,15 +455,16 @@ async fn run_interactive_tui(
 
             // Draw separator and preview pane
             if preview_active {
-                // Vertical separator
+                // Vertical separator (heavy when preview is focused)
+                let sep_char = if preview_state.focused { '┃' } else { '│' };
                 for row in 0..tui_height.saturating_sub(1) {
                     screen_buffer.put_char(
                         separator_col,
                         row,
-                        '│',
+                        sep_char,
                         Some(Color::DarkGrey),
                         None,
-                        false,
+                        preview_state.focused,
                         false,
                     );
                 }
@@ -496,9 +492,9 @@ async fn run_interactive_tui(
                 let instructions_row = tui_height.saturating_sub(1);
                 let instructions = if preview_active {
                     if multi_select {
-                        "Tab/Space: Toggle | Enter: Confirm | p: Preview | P: Focus | Esc: Exit"
+                        "Tab/Space: Toggle | Enter: Confirm | Ctrl+P: Preview | →/←: Focus | Esc: Exit"
                     } else {
-                        "↑/↓: Navigate | Enter: Select | p: Preview | P: Focus | Esc: Exit"
+                        "↑/↓: Navigate | Enter: Select | Ctrl+P: Preview | →/←: Focus | Esc: Exit"
                     }
                 } else if multi_select {
                     "Tab/Space: Toggle | Enter: Confirm | Esc/Ctrl+C/Ctrl+Q: Exit"
@@ -539,28 +535,16 @@ async fn run_interactive_tui(
         // Handle input with timeout to allow stream processing
         if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key_event) = event::read()? {
-                // Flush pending 'g' if timeout expired
-                if pending_g && pending_g_timer.elapsed() >= PENDING_G_TIMEOUT {
-                    let mut query = fuzzy_finder.get_query().to_string();
-                    query.push('g');
-                    fuzzy_finder.set_query(query).await;
-                    pending_g = false;
-                }
                 let prev_cursor = fuzzy_finder.get_cursor_position();
                 let prev_visible = preview_state.visible;
-                let _prev_focused = preview_state.focused;
                 match handle_async_key_event(
                     &key_event,
                     &mut fuzzy_finder,
                     &mut preview_state,
-                    &mut pending_g,
                 )
                 .await
                 {
                     Action::Continue => {
-                        if pending_g {
-                            pending_g_timer = Instant::now();
-                        }
                         needs_redraw = true;
                         // Trigger preview update on cursor move or visibility change
                         if fuzzy_finder.get_cursor_position() != prev_cursor
@@ -873,11 +857,6 @@ async fn run_interactive_tui_with_indicators(
     let mut last_spinner_update = Instant::now();
     let spinner_interval = std::time::Duration::from_millis(80);
 
-    // Multi-key state for vim-style 'gg'
-    let mut pending_g = false;
-    let mut pending_g_timer = Instant::now();
-    const PENDING_G_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(300);
-
     // Create screen buffer for double-buffered rendering
     let (term_width, _) = size()?;
     let mut screen_buffer = ScreenBuffer::new(term_width, tui_height);
@@ -1107,15 +1086,16 @@ async fn run_interactive_tui_with_indicators(
 
             // Draw separator and preview pane
             if preview_active {
-                // Vertical separator
+                // Vertical separator (heavy when preview is focused)
+                let sep_char = if preview_state.focused { '┃' } else { '│' };
                 for row in 0..tui_height.saturating_sub(1) {
                     screen_buffer.put_char(
                         separator_col,
                         row,
-                        '│',
+                        sep_char,
                         Some(Color::DarkGrey),
                         None,
-                        false,
+                        preview_state.focused,
                         false,
                     );
                 }
@@ -1143,9 +1123,9 @@ async fn run_interactive_tui_with_indicators(
                 let instructions_row = tui_height.saturating_sub(1);
                 let instructions = if preview_active {
                     if multi_select {
-                        "Tab/Space: Toggle | Enter: Confirm | p: Preview | P: Focus | Esc: Exit"
+                        "Tab/Space: Toggle | Enter: Confirm | Ctrl+P: Preview | →/←: Focus | Esc: Exit"
                     } else {
-                        "↑/↓: Navigate | Enter: Select | p: Preview | P: Focus | Esc: Exit"
+                        "↑/↓: Navigate | Enter: Select | Ctrl+P: Preview | →/←: Focus | Esc: Exit"
                     }
                 } else if multi_select {
                     "Tab/Space: Toggle | Enter: Confirm | Esc/Ctrl+C/Ctrl+Q: Exit"
@@ -1186,28 +1166,16 @@ async fn run_interactive_tui_with_indicators(
         // Handle input
         if event::poll(std::time::Duration::from_millis(50))? {
             if let Event::Key(key_event) = event::read()? {
-                // Flush pending 'g' if timeout expired
-                if pending_g && pending_g_timer.elapsed() >= PENDING_G_TIMEOUT {
-                    let mut query = fuzzy_finder.get_query().to_string();
-                    query.push('g');
-                    fuzzy_finder.set_query(query).await;
-                    pending_g = false;
-                }
                 let prev_cursor = fuzzy_finder.get_cursor_position();
                 let prev_visible = preview_state.visible;
-                let _prev_focused = preview_state.focused;
                 match handle_async_key_event(
                     &key_event,
                     &mut fuzzy_finder,
                     &mut preview_state,
-                    &mut pending_g,
                 )
                 .await
                 {
                     Action::Continue => {
-                        if pending_g {
-                            pending_g_timer = Instant::now();
-                        }
                         needs_redraw = true;
                         if fuzzy_finder.get_cursor_position() != prev_cursor
                             || preview_state.visible != prev_visible
@@ -1416,7 +1384,6 @@ async fn handle_async_key_event(
     key_event: &crossterm::event::KeyEvent,
     fuzzy_finder: &mut FuzzyFinder,
     preview_state: &mut PreviewState,
-    pending_g: &mut bool,
 ) -> crate::tui::controls::Action {
     // Preview-focused navigation
     if preview_state.focused {
@@ -1430,22 +1397,8 @@ async fn handle_async_key_event(
                 preview_state.scroll_down(1, max);
                 return Action::Continue;
             }
-            KeyCode::PageUp => {
-                preview_state.scroll_up(10);
-                return Action::Continue;
-            }
-            KeyCode::PageDown => {
-                let max = preview_state.lines.len();
-                preview_state.scroll_down(10, max);
-                return Action::Continue;
-            }
-            KeyCode::Home => {
-                preview_state.scroll_top();
-                return Action::Continue;
-            }
-            KeyCode::End => {
-                let max = preview_state.lines.len();
-                preview_state.scroll_bottom(max);
+            KeyCode::Left => {
+                preview_state.focused = false;
                 return Action::Continue;
             }
             KeyCode::Esc => {
@@ -1465,34 +1418,7 @@ async fn handle_async_key_event(
                 return Action::Continue;
             }
             _ => {
-                preview_state.focused = false;
                 // Fall through to list handling
-            }
-        }
-    }
-
-    // Vim-style multi-key: gg
-    if *pending_g {
-        *pending_g = false;
-        match key_event.code {
-            KeyCode::Char('g') => {
-                fuzzy_finder.move_cursor_to(0);
-                return Action::Continue;
-            }
-            KeyCode::Char(c) if !key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Flush pending 'g' as query char, then process current char
-                let mut query = fuzzy_finder.get_query().to_string();
-                query.push('g');
-                query.push(c);
-                fuzzy_finder.set_query(query).await;
-                return Action::Continue;
-            }
-            _ => {
-                // Flush pending 'g'
-                let mut query = fuzzy_finder.get_query().to_string();
-                query.push('g');
-                fuzzy_finder.set_query(query).await;
-                // Fall through to process current key
             }
         }
     }
@@ -1504,66 +1430,18 @@ async fn handle_async_key_event(
             } else if c == ' ' && fuzzy_finder.is_multi_select() {
                 fuzzy_finder.toggle_selection();
                 Action::Continue
-            } else if c == 'p' && !key_event.modifiers.contains(KeyModifiers::SHIFT) {
+            } else if c == 'p' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
                 preview_state.toggle_visible();
                 Action::Continue
-            } else if c == 'P' || (c == 'p' && key_event.modifiers.contains(KeyModifiers::SHIFT)) {
-                if preview_state.visible {
-                    preview_state.toggle_focus();
-                }
-                Action::Continue
-            } else if c == 'g' && !key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                *pending_g = true;
-                Action::Continue
-            } else if c == 'G' && !key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                let bottom = fuzzy_finder.get_filtered_items().len().saturating_sub(1);
-                fuzzy_finder.move_cursor_to(bottom);
-                Action::Continue
-            } else if c == 'j'
-                && key_event.modifiers.contains(KeyModifiers::CONTROL)
-                || c == 'n' && key_event.modifiers.contains(KeyModifiers::CONTROL)
-            {
-                fuzzy_finder.move_cursor(1);
-                Action::Continue
-            } else if c == 'k'
-                && key_event.modifiers.contains(KeyModifiers::CONTROL)
-                || c == 'p' && key_event.modifiers.contains(KeyModifiers::CONTROL)
-            {
-                fuzzy_finder.move_cursor(-1);
-                Action::Continue
             } else if c == 'u' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                if preview_state.visible && preview_state.focused {
+                if preview_state.visible {
                     preview_state.scroll_up(available_height_for_preview(preview_state) / 2);
-                } else {
-                    let half = fuzzy_finder.get_filtered_items().len() / 2;
-                    fuzzy_finder.move_cursor(-(half as i32));
                 }
                 Action::Continue
             } else if c == 'd' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                if preview_state.visible && preview_state.focused {
+                if preview_state.visible {
                     let h = available_height_for_preview(preview_state);
                     preview_state.scroll_down(h / 2, preview_state.lines.len());
-                } else {
-                    let half = fuzzy_finder.get_filtered_items().len() / 2;
-                    fuzzy_finder.move_cursor(half as i32);
-                }
-                Action::Continue
-            } else if c == 'f' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                if preview_state.visible && preview_state.focused {
-                    let h = available_height_for_preview(preview_state);
-                    preview_state.scroll_down(h, preview_state.lines.len());
-                } else {
-                    let h = fuzzy_finder.get_filtered_items().len();
-                    fuzzy_finder.move_cursor(h as i32);
-                }
-                Action::Continue
-            } else if c == 'b' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                if preview_state.visible && preview_state.focused {
-                    let h = available_height_for_preview(preview_state);
-                    preview_state.scroll_up(h);
-                } else {
-                    let h = fuzzy_finder.get_filtered_items().len();
-                    fuzzy_finder.move_cursor(-(h as i32));
                 }
                 Action::Continue
             } else {
@@ -1585,6 +1463,18 @@ async fn handle_async_key_event(
         }
         KeyCode::Down => {
             fuzzy_finder.move_cursor(1);
+            Action::Continue
+        }
+        KeyCode::Left => {
+            if preview_state.visible {
+                preview_state.focused = false;
+            }
+            Action::Continue
+        }
+        KeyCode::Right => {
+            if preview_state.visible {
+                preview_state.focused = true;
+            }
             Action::Continue
         }
         KeyCode::Tab => {
@@ -2197,7 +2087,7 @@ mod tests {
         let mut finder = FuzzyFinder::with_items_async(items, false).await;
 
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new(), &mut false).await;
+        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
 
         assert_eq!(action, crate::tui::controls::Action::Exit);
     }
@@ -2214,7 +2104,7 @@ mod tests {
         assert!(finder.get_query().is_empty());
 
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new(), &mut false).await;
+        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
 
         assert_eq!(action, crate::tui::controls::Action::Exit);
     }
@@ -2233,7 +2123,7 @@ mod tests {
 
         // First Escape should clear the query, not exit
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new(), &mut false).await;
+        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
 
         assert_eq!(action, crate::tui::controls::Action::Continue);
         assert!(finder.get_query().is_empty());
@@ -2254,12 +2144,12 @@ mod tests {
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
 
         // First Escape: clears query
-        let action1 = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new(), &mut false).await;
+        let action1 = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
         assert_eq!(action1, crate::tui::controls::Action::Continue);
         assert!(finder.get_query().is_empty());
 
         // Second Escape: exits
-        let action2 = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new(), &mut false).await;
+        let action2 = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
         assert_eq!(action2, crate::tui::controls::Action::Exit);
     }
 
@@ -2280,7 +2170,7 @@ mod tests {
 
         // Escape to clear query
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new(), &mut false).await;
+        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
 
         assert_eq!(action, crate::tui::controls::Action::Continue);
         assert!(finder.get_query().is_empty());

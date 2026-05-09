@@ -4,6 +4,9 @@ use crate::tui::buffer::ScreenBuffer;
 use crossterm::style::Color;
 use std::collections::HashMap;
 
+/// Sentinel value for the smart auto-preview rule
+const AUTO_SENTINEL: &str = "__auto__";
+
 /// Preview rule: command template + optional extension filter
 #[derive(Debug, Clone, PartialEq)]
 pub struct PreviewRule {
@@ -20,7 +23,15 @@ impl PreviewRule {
     /// - `"bat"` → default rule (no braces)
     /// - `"bat {rs,toml}"` → rule for .rs and .toml
     /// - `"bat {}"` → explicit default rule
+    /// - `"auto"` → smart auto-preview rule
     pub fn parse(s: &str) -> Result<Self, String> {
+        let trimmed = s.trim();
+        if trimmed.eq_ignore_ascii_case("auto") {
+            return Ok(Self {
+                cmd: AUTO_SENTINEL.to_string(),
+                exts: vec![],
+            });
+        }
         if let Some(brace_start) = s.rfind('{') {
             let cmd = s[..brace_start].trim().to_string();
             let brace_content = &s[brace_start + 1..];
@@ -37,7 +48,7 @@ impl PreviewRule {
         } else {
             // No braces: treat as default rule
             Ok(Self {
-                cmd: s.trim().to_string(),
+                cmd: trimmed.to_string(),
                 exts: vec![],
             })
         }
@@ -102,13 +113,6 @@ impl PreviewState {
         self.visible = !self.visible;
         if !self.visible {
             self.focused = false;
-        }
-    }
-
-    /// Toggle focus between list and preview
-    pub fn toggle_focus(&mut self) {
-        if self.visible {
-            self.focused = !self.focused;
         }
     }
 
@@ -403,7 +407,12 @@ pub fn render_preview_to_buffer(
         } else {
             err
         };
-        buffer.put_str(x, y, msg, Some(Color::Red), None, false, false);
+        let color = if msg == "(not a file)" {
+            Some(Color::DarkGrey)
+        } else {
+            Some(Color::Red)
+        };
+        buffer.put_str(x, y, msg, color, None, false, false);
         return;
     }
 
@@ -457,6 +466,27 @@ pub fn strip_ansi_sequences(s: &str) -> String {
     result
 }
 
+/// Build a smart preview command based on filesystem metadata.
+///
+/// Returns an empty string for non-existent paths (caller should render
+/// "(not a file)"), otherwise returns a coreutils-safe command.
+fn smart_preview_command(clean_item: &str) -> String {
+    match std::fs::metadata(clean_item) {
+        Ok(meta) if meta.is_dir() => format!("ls -la '{}'", shell_escape_single_quote(clean_item)),
+        Ok(meta) if meta.is_file() => format!(
+            "cat '{}' | head -n 1000",
+            shell_escape_single_quote(clean_item)
+        ),
+        _ => String::new(),
+    }
+}
+
+/// Escape single quotes for shell single-quoted strings.
+/// `'a'b'` → `a'\''b`
+fn shell_escape_single_quote(s: &str) -> String {
+    s.replace('\'', "'\"'\"'")
+}
+
 /// Build preview command from rules and item.
 ///
 /// Rules are scanned in order:
@@ -479,6 +509,10 @@ pub fn build_preview_command(item: &str, rules: &[PreviewRule]) -> String {
     let Some(rule) = rule else {
         return String::new();
     };
+
+    if rule.cmd == AUTO_SENTINEL {
+        return smart_preview_command(&clean_item);
+    }
 
     let tmpl = &rule.cmd;
     if tmpl.contains("{}") {
@@ -601,5 +635,58 @@ mod tests {
             build_preview_command("\x1b[31mfoo.txt\x1b[0m", &rules),
             "cat foo.txt"
         );
+    }
+
+    #[test]
+    fn test_preview_rule_parse_auto() {
+        let r = PreviewRule::parse("auto").unwrap();
+        assert_eq!(r.cmd, AUTO_SENTINEL);
+        assert!(r.exts.is_empty());
+
+        let r2 = PreviewRule::parse("AUTO").unwrap();
+        assert_eq!(r2.cmd, AUTO_SENTINEL);
+    }
+
+    #[test]
+    fn test_smart_preview_file() {
+        let tmp = std::env::temp_dir().join("ff_test_smart_file.txt");
+        std::fs::write(&tmp, "hello").unwrap();
+        let cmd = smart_preview_command(tmp.to_str().unwrap());
+        assert!(cmd.starts_with("cat "));
+        assert!(cmd.contains("| head -n 1000"));
+        std::fs::remove_file(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_smart_preview_directory() {
+        let tmp = std::env::temp_dir().join("ff_test_smart_dir");
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir(&tmp).unwrap();
+        let cmd = smart_preview_command(tmp.to_str().unwrap());
+        assert!(cmd.starts_with("ls -la "));
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_smart_preview_nonexistent() {
+        let cmd = smart_preview_command("/ff_test_definitely_does_not_exist_12345");
+        assert_eq!(cmd, "");
+    }
+
+    #[test]
+    fn test_auto_composes_with_explicit_rules() {
+        // Explicit rule first, auto fallback
+        let rules = vec![
+            PreviewRule::parse("bat {rs}").unwrap(),
+            PreviewRule::parse("auto").unwrap(),
+        ];
+        // .rs hits explicit rule
+        assert_eq!(build_preview_command("foo.rs", &rules), "bat foo.rs");
+        // .md falls through to auto — but we can't test exact command because
+        // it depends on whether the file exists. We can at least verify it
+        // generates a command (or empty for non-existent).
+        let cmd = build_preview_command("foo.md", &rules);
+        // Since foo.md doesn't exist, auto returns ""
+        assert_eq!(cmd, "");
     }
 }
