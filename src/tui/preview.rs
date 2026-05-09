@@ -555,10 +555,11 @@ pub fn build_preview_command(item: &str, rules: &[PreviewRule]) -> String {
     }
 
     let tmpl = &rule.cmd;
+    let escaped = format!("'{}'", shell_escape_single_quote(&clean_item));
     if tmpl.contains("{}") {
-        tmpl.replace("{}", &clean_item)
+        tmpl.replace("{}", &escaped)
     } else {
-        format!("{} {}", tmpl, clean_item)
+        format!("{} {}", tmpl, escaped)
     }
 }
 
@@ -629,7 +630,7 @@ mod tests {
     #[test]
     fn test_build_preview_command_default() {
         let rules = vec![PreviewRule::parse("cat").unwrap()];
-        assert_eq!(build_preview_command("foo.rs", &rules), "cat foo.rs");
+        assert_eq!(build_preview_command("foo.rs", &rules), "cat 'foo.rs'");
     }
 
     #[test]
@@ -639,9 +640,22 @@ mod tests {
             PreviewRule::parse("glow {md}").unwrap(),
             PreviewRule::parse("cat").unwrap(),
         ];
-        assert_eq!(build_preview_command("foo.rs", &rules), "bat foo.rs");
-        assert_eq!(build_preview_command("foo.md", &rules), "glow foo.md");
-        assert_eq!(build_preview_command("foo.txt", &rules), "cat foo.txt");
+        assert_eq!(build_preview_command("foo.rs", &rules), "bat 'foo.rs'");
+        assert_eq!(build_preview_command("foo.md", &rules), "glow 'foo.md'");
+        assert_eq!(build_preview_command("foo.txt", &rules), "cat 'foo.txt'");
+    }
+
+    #[test]
+    fn test_build_preview_command_escapes_special_chars() {
+        let rules = vec![PreviewRule::parse("cat").unwrap()];
+        assert_eq!(
+            build_preview_command("provider | name", &rules),
+            "cat 'provider | name'"
+        );
+        assert_eq!(
+            build_preview_command("it's ok", &rules),
+            "cat 'it'\"'\"'s ok'"
+        );
     }
 
     #[test]
@@ -673,7 +687,7 @@ mod tests {
         let rules = vec![PreviewRule::parse("cat").unwrap()];
         assert_eq!(
             build_preview_command("\x1b[31mfoo.txt\x1b[0m", &rules),
-            "cat foo.txt"
+            "cat 'foo.txt'"
         );
     }
 
@@ -721,7 +735,7 @@ mod tests {
             PreviewRule::parse("auto").unwrap(),
         ];
         // .rs hits explicit rule
-        assert_eq!(build_preview_command("foo.rs", &rules), "bat foo.rs");
+        assert_eq!(build_preview_command("foo.rs", &rules), "bat 'foo.rs'");
         // .md falls through to auto — but we can't test exact command because
         // it depends on whether the file exists. We can at least verify it
         // generates a command (or empty for non-existent).
