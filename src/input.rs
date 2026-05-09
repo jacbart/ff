@@ -59,7 +59,7 @@ pub fn read_piped_stdin() -> Result<Vec<String>, String> {
     stdin
         .read_to_string(&mut input)
         .map_err(|e| format!("Failed to read stdin: {e}"))?;
-    Ok(process_stdin_content(&input)?)
+    process_stdin_content(&input)
 }
 
 /// Reopen stdin from /dev/tty so crossterm can read keyboard events

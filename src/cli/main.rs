@@ -3,8 +3,8 @@ use std::fs;
 
 use crate::cli::planner::{plan_cli_action, CliAction};
 use crate::cli::tty::check_tty_requirements;
-use crate::config;
 use crate::get_build_info;
+use crate::help;
 use crate::input::{read_input, read_piped_stdin, reopen_stdin_from_tty, send_input_to_channel};
 use crate::tui::ui::{create_items_channel, run_tui_with_config};
 use crate::tui::TuiConfig;
@@ -178,7 +178,7 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
             Ok(())
         }
         CliAction::ShowHelp => {
-            config::print_usage();
+            help::print_usage();
             Ok(())
         }
         CliAction::RunAsyncTui {
@@ -309,10 +309,8 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
             // Reopen stdin from /dev/tty so crossterm can read keyboard events.
             // Piped stdin has been fully consumed above; now we need a real TTY
             // on fd 0 for enable_raw_mode() and event::poll()/event::read().
-            reopen_stdin_from_tty().map_err(|e| {
-                Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))
-                    as Box<dyn std::error::Error>
-            })?;
+            reopen_stdin_from_tty()
+                .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)?;
 
             let rt = tokio::runtime::Runtime::new()?;
             let result = rt.block_on(async {

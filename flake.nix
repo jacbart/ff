@@ -1,5 +1,5 @@
 {
-  description = "ff flake";
+  description = "ff - A lightweight fuzzy finder for the terminal";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";

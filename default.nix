@@ -27,7 +27,7 @@ rustPlatform.buildRustPackage {
   meta = with lib; {
     description = "flake for ${pname} version ${version}";
     homepage = "https://github.com/jacbart/";
-    license = with licenses; [ mpl20 ];
+    license = with licenses; [ mit ];
     maintainers = with maintainers; [ jacbart ];
   };
 }

@@ -94,6 +94,12 @@ pub struct PreviewState {
     pub error: Option<String>,
 }
 
+impl Default for PreviewState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PreviewState {
     pub fn new() -> Self {
         Self {
@@ -165,6 +171,55 @@ impl PreviewState {
     }
 }
 
+/// Auto-inject --color=always for known tools if not already present
+pub fn inject_color_flag(cmd: &str) -> String {
+    let trimmed = cmd.trim();
+    let first_word = trimmed.split_whitespace().next().unwrap_or("");
+    let needs_color = matches!(first_word, "bat" | "batcat" | "eza" | "exa");
+    if needs_color && !trimmed.contains("--color=always") && !trimmed.contains("--color always") {
+        // Insert --color=always after the command name
+        if let Some(pos) = trimmed.find(' ') {
+            format!("{} --color=always{}", &trimmed[..pos], &trimmed[pos..])
+        } else {
+            format!("{} --color=always", trimmed)
+        }
+    } else {
+        cmd.to_string()
+    }
+}
+
+/// Spawn a preview command in a blocking task and send results back
+pub fn spawn_preview_task(
+    command: String,
+    sender: std::sync::mpsc::Sender<PreviewResult>,
+) -> tokio::task::JoinHandle<()> {
+    let command = inject_color_flag(&command);
+    tokio::task::spawn_blocking(move || {
+        let output = if cfg!(target_os = "windows") {
+            std::process::Command::new("cmd")
+                .args(["/C", &command])
+                .output()
+        } else {
+            std::process::Command::new("sh")
+                .args(["-c", &command])
+                .output()
+        };
+        let result = match output {
+            Ok(out) => {
+                if out.status.success() {
+                    let text = String::from_utf8_lossy(&out.stdout);
+                    PreviewResult::Success(parse_ansi_output(&text))
+                } else {
+                    let err = String::from_utf8_lossy(&out.stderr);
+                    PreviewResult::Error(err.to_string())
+                }
+            }
+            Err(e) => PreviewResult::Error(e.to_string()),
+        };
+        let _ = sender.send(result);
+    })
+}
+
 /// Parse ANSI-encoded text into styled lines
 pub fn parse_ansi_output(text: &str) -> Vec<StyledLine> {
     let mut lines = Vec::new();
@@ -181,13 +236,7 @@ pub fn parse_ansi_output(text: &str) -> Vec<StyledLine> {
         if ch == '\x1b' {
             // Flush current segment
             if !current_text.is_empty() {
-                current_line.push((
-                    std::mem::take(&mut current_text),
-                    fg,
-                    bg,
-                    bold,
-                    underline,
-                ));
+                current_line.push((std::mem::take(&mut current_text), fg, bg, bold, underline));
             }
             // Parse escape sequence
             if chars.next() == Some('[') {
@@ -211,13 +260,7 @@ pub fn parse_ansi_output(text: &str) -> Vec<StyledLine> {
 
         if ch == '\n' {
             if !current_text.is_empty() {
-                current_line.push((
-                    std::mem::take(&mut current_text),
-                    fg,
-                    bg,
-                    bold,
-                    underline,
-                ));
+                current_line.push((std::mem::take(&mut current_text), fg, bg, bold, underline));
             }
             lines.push(std::mem::take(&mut current_line));
         } else if ch == '\r' {
@@ -245,10 +288,7 @@ fn apply_sgr(
     bold: &mut bool,
     underline: &mut bool,
 ) {
-    let nums: Vec<u16> = params
-        .split(';')
-        .filter_map(|s| s.parse().ok())
-        .collect();
+    let nums: Vec<u16> = params.split(';').filter_map(|s| s.parse().ok()).collect();
 
     if nums.is_empty() {
         // Empty params = reset
@@ -377,13 +417,18 @@ fn ansi_256_to_color(code: u16) -> Option<Color> {
         232..=255 => {
             // Grayscale
             let level = ((code - 232) as u8) * 10 + 8;
-            Some(Color::Rgb { r: level, g: level, b: level })
+            Some(Color::Rgb {
+                r: level,
+                g: level,
+                b: level,
+            })
         }
         _ => None,
     }
 }
 
 /// Render styled lines into a screen buffer region
+#[allow(clippy::too_many_arguments)]
 pub fn render_preview_to_buffer(
     buffer: &mut ScreenBuffer,
     lines: &[StyledLine],
@@ -432,13 +477,7 @@ pub fn render_preview_to_buffer(
             if col >= x + width {
                 break;
             }
-            let remaining = (x + width - col) as usize;
-            let slice = if text.len() > remaining {
-                &text[..remaining]
-            } else {
-                text.as_str()
-            };
-            let written = buffer.put_str(col, row, slice, *fg, *bg, *bold, *underline);
+            let written = buffer.put_str(col, row, text, *fg, *bg, *bold, *underline);
             col += written;
         }
     }
@@ -453,7 +492,7 @@ pub fn strip_ansi_sequences(s: &str) -> String {
             // Skip escape sequence
             if chars.next() == Some('[') {
                 // CSI sequence: skip until letter or @~_`
-                while let Some(next) = chars.next() {
+                for next in chars.by_ref() {
                     if next.is_ascii_alphabetic() || matches!(next, '@' | '~' | '_' | '`') {
                         break;
                     }
@@ -490,8 +529,9 @@ fn shell_escape_single_quote(s: &str) -> String {
 /// Build preview command from rules and item.
 ///
 /// Rules are scanned in order:
-/// 1. First rule whose exts contain the item's extension
-/// 2. First rule with empty exts (default)
+///   1. First rule whose exts contain the item's extension
+///   2. First rule with empty exts (default)
+///
 /// If no rule matches, returns empty string.
 pub fn build_preview_command(item: &str, rules: &[PreviewRule]) -> String {
     let clean_item = strip_ansi_sequences(item);

@@ -30,6 +30,8 @@ ff [OPTIONS] [INPUT]
 | `-n`, `--line-number` | Output line numbers (`file:line` for file input) |
 | `--height <N>` | Set TUI height in lines (non-fullscreen) |
 | `--height-percentage <N>` | Set TUI height as % of terminal (non-fullscreen) |
+| `-p`, `--preview <cmd>` | Preview command (repeatable, `{ext1,ext2}` for filters, `auto` for smart mode) |
+| `--preview-auto` | Auto-show preview on cursor move |
 | `-h`, `--help` | Show help message |
 | `-V`, `--version` | Show version information |
 
@@ -55,6 +57,12 @@ cat items.txt | ff -m
 # Non-fullscreen mode
 ff items.txt --height 10
 ff items.txt --height-percentage 50
+
+# Preview with smart auto-detection
+ls | ff -p auto --preview-auto
+
+# Preview with custom rules
+ls | ff -p 'bat --color=always {rs,toml}' -p 'glow {md}' -p 'cat' --preview-auto
 ```
 
 ### Input Sources
@@ -75,7 +83,13 @@ ff accepts input from multiple sources:
 | Up/Down | Navigate results |
 | Enter | Select (single) or confirm selection (multi) |
 | Tab/Space | Toggle selection (multi-select mode) |
-| Esc, Ctrl+C, Ctrl+Q | Exit without selection |
+| Ctrl+P | Toggle preview pane |
+| Right Arrow | Focus preview pane |
+| Left Arrow | Focus list |
+| Ctrl+U | Scroll preview half-page up |
+| Ctrl+D | Scroll preview half-page down |
+| Esc | Clear query, then exit |
+| Ctrl+C, Ctrl+Q | Exit without selection |
 
 ## Library Usage
 
@@ -149,6 +163,8 @@ let config = TuiConfig {
     show_loading_indicator: true,
     loading_message: Some("Loading...".into()),
     ready_message: Some("Ready".into()),
+    preview_rules: vec![],
+    preview_auto: false,
 };
 
 let (session, tui_future) = FuzzyFinderSession::with_config(true, config);

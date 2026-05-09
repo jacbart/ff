@@ -27,8 +27,8 @@
 
 // === Internal Modules ===
 pub mod cli;
-pub mod config;
 pub mod fuzzy;
+pub mod help;
 pub mod input;
 pub mod tui;
 
@@ -183,6 +183,9 @@ pub use tui::PreviewRule;
 ///     Ok(())
 /// }
 /// ```
+/// Common return type for fuzzy finder sessions.
+pub type SessionResult = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>;
+
 pub struct FuzzyFinderSession {
     sender: mpsc::Sender<String>,
 }
@@ -193,14 +196,7 @@ impl FuzzyFinderSession {
     /// Returns a tuple containing:
     /// 1. The session handle (for adding items)
     /// 2. A future that runs the TUI (must be awaited or spawned)
-    pub fn new(
-        multi_select: bool,
-    ) -> (
-        Self,
-        impl std::future::Future<
-            Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>,
-        >,
-    ) {
+    pub fn new(multi_select: bool) -> (Self, impl std::future::Future<Output = SessionResult>) {
         Self::with_config(multi_select, TuiConfig::default())
     }
 
@@ -208,12 +204,7 @@ impl FuzzyFinderSession {
     pub fn with_config(
         multi_select: bool,
         config: TuiConfig,
-    ) -> (
-        Self,
-        impl std::future::Future<
-            Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>,
-        >,
-    ) {
+    ) -> (Self, impl std::future::Future<Output = SessionResult>) {
         let (sender, receiver) = tui::create_items_channel();
         (
             Self { sender },
@@ -279,14 +270,7 @@ impl FuzzyFinderWithIndicators {
     /// Returns a tuple containing:
     /// 1. The session handle (for adding items and updating indicators)
     /// 2. A future that runs the TUI (must be awaited or spawned)
-    pub fn new(
-        multi_select: bool,
-    ) -> (
-        Self,
-        impl std::future::Future<
-            Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>,
-        >,
-    ) {
+    pub fn new(multi_select: bool) -> (Self, impl std::future::Future<Output = SessionResult>) {
         Self::with_config(multi_select, TuiConfig::default())
     }
 
@@ -294,12 +278,7 @@ impl FuzzyFinderWithIndicators {
     pub fn with_config(
         multi_select: bool,
         config: TuiConfig,
-    ) -> (
-        Self,
-        impl std::future::Future<
-            Output = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>,
-        >,
-    ) {
+    ) -> (Self, impl std::future::Future<Output = SessionResult>) {
         let (sender, receiver) = tui::create_command_channel();
         (
             Self { sender },

@@ -126,8 +126,8 @@ pub fn score_match_with_original(
     // Fast path: prefix match
     if item.starts_with(query) {
         let positions: Vec<usize> = (0..query.chars().count()).collect();
-        let score = (scores::PREFIX + (query.len() as i32 * scores::CONSECUTIVE))
-            .min(scores::EXACT - 1);
+        let score =
+            (scores::PREFIX + (query.len() as i32 * scores::CONSECUTIVE)).min(scores::EXACT - 1);
         return Some(MatchResult {
             score,
             positions,
@@ -143,8 +143,9 @@ pub fn score_match_with_original(
 
         // Score based on position (earlier is better)
         let position_bonus = ((item.len() - start_idx) as i32 * 2).min(100);
-        let score = (scores::PREFIX / 2 + (query.len() as i32 * scores::CONSECUTIVE) + position_bonus)
-            .min(scores::PREFIX - 1);
+        let score =
+            (scores::PREFIX / 2 + (query.len() as i32 * scores::CONSECUTIVE) + position_bonus)
+                .min(scores::PREFIX - 1);
 
         return Some(MatchResult {
             score,
@@ -417,7 +418,7 @@ fn strip_ansi_sequences(s: &str) -> String {
     while let Some(ch) = chars.next() {
         if ch == '\x1b' {
             if chars.next() == Some('[') {
-                while let Some(next) = chars.next() {
+                for next in chars.by_ref() {
                     if next.is_ascii_alphabetic() || matches!(next, '@' | '~' | '_' | '`') {
                         break;
                     }
@@ -463,9 +464,8 @@ pub fn score_batch(items: &[String], query: &str) -> Vec<(usize, MatchResult)> {
         .filter_map(|(idx, item)| {
             let clean = strip_ansi_sequences(item);
             let clean_lower = clean.to_lowercase();
-            score_match_with_original(&clean_lower, &clean, &query_lower).map(|result| {
-                (idx, result)
-            })
+            score_match_with_original(&clean_lower, &clean, &query_lower)
+                .map(|result| (idx, result))
         })
         .collect();
 
@@ -782,11 +782,7 @@ mod tests {
 
     #[test]
     fn test_stable_sort_preserves_order() {
-        let items = vec![
-            "aaa".to_string(),
-            "bbb".to_string(),
-            "ccc".to_string(),
-        ];
+        let items = vec!["aaa".to_string(), "bbb".to_string(), "ccc".to_string()];
         let results = score_batch(&items, "");
         // Empty query: all score 0, same tier, should preserve original order
         assert_eq!(results[0].0, 0);

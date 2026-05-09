@@ -19,9 +19,12 @@ pub struct FuzzyFinder {
     pub(crate) cursor_position: usize,
     pub(crate) multi_select: bool,
     /// Cache stores (filtered_items, filtered_indices, match_positions) for each query
-    pub(crate) query_cache:
-        std::collections::HashMap<String, (Vec<String>, Vec<usize>, Vec<MatchPositions>)>,
+    pub(crate) query_cache: crate::fuzzy::finder::QueryCache,
 }
+
+/// Type alias for the fuzzy finder query cache.
+pub type QueryCache =
+    std::collections::HashMap<String, (Vec<String>, Vec<usize>, Vec<MatchPositions>)>;
 
 impl FuzzyFinder {
     /// Create a new async fuzzy finder (empty)

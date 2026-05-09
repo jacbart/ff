@@ -1,13 +1,15 @@
 use crate::fuzzy::FuzzyFinder;
 use crate::tui::buffer::ScreenBuffer;
 use crate::tui::controls::Action;
+use crate::tui::events;
+use crate::tui::layout;
 use crate::tui::preview::{
-    build_preview_command, parse_ansi_output, render_preview_to_buffer, PreviewResult,
-    PreviewState,
+    build_preview_command, parse_ansi_output, render_preview_to_buffer, spawn_preview_task,
+    PreviewResult, PreviewState,
 };
 use crossterm::{
     cursor::{position, Hide, MoveTo, Show},
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{self, Event},
     execute,
     style::{
         Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
@@ -15,7 +17,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
 };
 use std::{
-    io::{self, Read, Write},
+    io::{self, Write},
     mem,
     time::Instant,
 };
@@ -215,7 +217,7 @@ async fn run_interactive_tui(
         match position() {
             Ok(pos) => original_cursor = pos,
             Err(_) => {
-                match get_cursor_position_from_stderr() {
+                match layout::get_cursor_position_from_stderr() {
                     Ok(pos) => original_cursor = pos,
                     Err(_) => {
                         // Could not determine cursor position, fallback to fullscreen
@@ -230,7 +232,7 @@ async fn run_interactive_tui(
         Ok(s) => s,
         Err(_) => {
             // Fallback for size if stdout is not TTY
-            get_terminal_size_from_stderr().unwrap_or((80, 24))
+            layout::get_terminal_size_from_stderr().unwrap_or((80, 24))
         }
     };
     let tui_height = config.calculate_height(term_height);
@@ -321,9 +323,8 @@ async fn run_interactive_tui(
         let tui_height = config.calculate_height(term_height);
 
         // Determine layout
-        let preview_active = preview_state.visible
-            && !config.preview_rules.is_empty()
-            && term_width >= 40;
+        let preview_active =
+            preview_state.visible && !config.preview_rules.is_empty() && term_width >= 40;
         let left_width = if preview_active {
             term_width / 2 - 1
         } else {
@@ -537,7 +538,7 @@ async fn run_interactive_tui(
             if let Event::Key(key_event) = event::read()? {
                 let prev_cursor = fuzzy_finder.get_cursor_position();
                 let prev_visible = preview_state.visible;
-                match handle_async_key_event(
+                match events::handle_async_key_event(
                     &key_event,
                     &mut fuzzy_finder,
                     &mut preview_state,
@@ -609,134 +610,6 @@ async fn run_interactive_tui(
     }
 
     Ok(selected_items)
-}
-
-/// Get cursor position by querying stderr (fallback for when stdout is redirected)
-fn get_cursor_position_from_stderr() -> io::Result<(u16, u16)> {
-    let mut stderr = io::stderr();
-    let mut stdin = io::stdin();
-
-    // Write ANSI query for cursor position
-    write!(stderr, "\x1b[6n")?;
-    stderr.flush()?;
-
-    // Read response: ESC [ rows ; cols R
-    let mut buf = [0u8; 1];
-    let mut response = Vec::new();
-    let mut read_count = 0;
-
-    // Read byte by byte until 'R' or limit
-    while read_count < 16 {
-        match stdin.read_exact(&mut buf) {
-            Ok(_) => {
-                response.push(buf[0]);
-                if buf[0] == b'R' {
-                    break;
-                }
-            }
-            Err(_) => break,
-        }
-        read_count += 1;
-    }
-
-    // Parse response
-    let s = String::from_utf8_lossy(&response);
-    if s.starts_with("\x1b[") && s.ends_with('R') {
-        let content = &s[2..s.len() - 1];
-        let parts: Vec<&str> = content.split(';').collect();
-        if parts.len() == 2 {
-            let row = parts[0].parse::<u16>().unwrap_or(1);
-            let col = parts[1].parse::<u16>().unwrap_or(1);
-            // ANSI is 1-based, crossterm is 0-based
-            return Ok((col.saturating_sub(1), row.saturating_sub(1)));
-        }
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::Other,
-        "Failed to parse cursor position from stderr",
-    ))
-}
-
-/// Get terminal size by querying stderr (fallback)
-/// Uses `crossterm::terminal::size` normally, but this can fail if stdout is a pipe.
-/// This implementation relies on `crossterm` actually working on stderr if we redirect?
-/// No, crossterm uses stdout fd.
-/// We can try to use `stty size` or similar? Or just return error.
-/// For now, a simple placeholder or trying to use `ioctl` (unsafe) would be needed.
-/// Since we can't easily do unsafe ioctl here without deps, we'll return error.
-fn get_terminal_size_from_stderr() -> io::Result<(u16, u16)> {
-    // Basic fallback: try to read from `stty size` command if available
-    use std::process::Command;
-    let output = Command::new("stty")
-        .arg("size")
-        .arg("-F")
-        .arg("/dev/stderr")
-        .output();
-
-    if let Ok(output) = output {
-        let output_str = String::from_utf8_lossy(&output.stdout);
-        let parts: Vec<&str> = output_str.trim().split_whitespace().collect();
-        if parts.len() == 2 {
-            let rows = parts[0].parse::<u16>().unwrap_or(24);
-            let cols = parts[1].parse::<u16>().unwrap_or(80);
-            return Ok((cols, rows));
-        }
-    }
-
-    Err(io::Error::new(
-        io::ErrorKind::Other,
-        "Failed to get terminal size from stderr",
-    ))
-}
-
-/// Auto-inject --color=always for known tools if not already present
-fn inject_color_flag(cmd: &str) -> String {
-    let trimmed = cmd.trim();
-    let first_word = trimmed.split_whitespace().next().unwrap_or("");
-    let needs_color = matches!(first_word, "bat" | "batcat" | "eza" | "exa");
-    if needs_color && !trimmed.contains("--color=always") && !trimmed.contains("--color always") {
-        // Insert --color=always after the command name
-        if let Some(pos) = trimmed.find(' ') {
-            format!("{} --color=always{}", &trimmed[..pos], &trimmed[pos..])
-        } else {
-            format!("{} --color=always", trimmed)
-        }
-    } else {
-        cmd.to_string()
-    }
-}
-
-/// Spawn a preview command in a blocking task and send results back
-fn spawn_preview_task(
-    command: String,
-    sender: std::sync::mpsc::Sender<PreviewResult>,
-) -> tokio::task::JoinHandle<()> {
-    let command = inject_color_flag(&command);
-    tokio::task::spawn_blocking(move || {
-        let output = if cfg!(target_os = "windows") {
-            std::process::Command::new("cmd")
-                .args(["/C", &command])
-                .output()
-        } else {
-            std::process::Command::new("sh")
-                .args(["-c", &command])
-                .output()
-        };
-        let result = match output {
-            Ok(out) => {
-                if out.status.success() {
-                    let text = String::from_utf8_lossy(&out.stdout);
-                    PreviewResult::Success(parse_ansi_output(&text))
-                } else {
-                    let err = String::from_utf8_lossy(&out.stderr);
-                    PreviewResult::Error(err.to_string())
-                }
-            }
-            Err(e) => PreviewResult::Error(e.to_string()),
-        };
-        let _ = sender.send(result);
-    })
 }
 
 /// Trigger preview update if needed
@@ -926,9 +799,8 @@ async fn run_interactive_tui_with_indicators(
         let tui_height = config.calculate_height(term_height);
 
         // Determine layout
-        let preview_active = preview_state.visible
-            && !config.preview_rules.is_empty()
-            && term_width >= 40;
+        let preview_active =
+            preview_state.visible && !config.preview_rules.is_empty() && term_width >= 40;
         let left_width = if preview_active {
             term_width / 2 - 1
         } else {
@@ -1168,7 +1040,7 @@ async fn run_interactive_tui_with_indicators(
             if let Event::Key(key_event) = event::read()? {
                 let prev_cursor = fuzzy_finder.get_cursor_position();
                 let prev_visible = preview_state.visible;
-                match handle_async_key_event(
+                match events::handle_async_key_event(
                     &key_event,
                     &mut fuzzy_finder,
                     &mut preview_state,
@@ -1379,155 +1251,6 @@ fn draw_item_with_indicator<W: Write>(
     Ok(())
 }
 
-/// Handle key events in async mode
-async fn handle_async_key_event(
-    key_event: &crossterm::event::KeyEvent,
-    fuzzy_finder: &mut FuzzyFinder,
-    preview_state: &mut PreviewState,
-) -> crate::tui::controls::Action {
-    // Preview-focused navigation
-    if preview_state.focused {
-        match key_event.code {
-            KeyCode::Up => {
-                preview_state.scroll_up(1);
-                return Action::Continue;
-            }
-            KeyCode::Down => {
-                let max = preview_state.lines.len();
-                preview_state.scroll_down(1, max);
-                return Action::Continue;
-            }
-            KeyCode::Left => {
-                preview_state.focused = false;
-                return Action::Continue;
-            }
-            KeyCode::Esc => {
-                preview_state.focused = false;
-                return Action::Continue;
-            }
-            KeyCode::Enter => {
-                let selected = fuzzy_finder.get_selected_items();
-                if !selected.is_empty() {
-                    return Action::Select(selected);
-                } else if !fuzzy_finder.get_filtered_items().is_empty() {
-                    let cursor_pos = fuzzy_finder.get_cursor_position();
-                    let current_item = &fuzzy_finder.get_filtered_items()[cursor_pos];
-                    let current_idx = fuzzy_finder.get_original_index(cursor_pos).unwrap();
-                    return Action::Select(vec![(current_idx, current_item.clone())]);
-                }
-                return Action::Continue;
-            }
-            _ => {
-                // Fall through to list handling
-            }
-        }
-    }
-
-    match key_event.code {
-        KeyCode::Char(c) => {
-            if (c == 'q' || c == 'c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                Action::Exit
-            } else if c == ' ' && fuzzy_finder.is_multi_select() {
-                fuzzy_finder.toggle_selection();
-                Action::Continue
-            } else if c == 'p' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                preview_state.toggle_visible();
-                Action::Continue
-            } else if c == 'u' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                if preview_state.visible {
-                    preview_state.scroll_up(available_height_for_preview(preview_state) / 2);
-                }
-                Action::Continue
-            } else if c == 'd' && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                if preview_state.visible {
-                    let h = available_height_for_preview(preview_state);
-                    preview_state.scroll_down(h / 2, preview_state.lines.len());
-                }
-                Action::Continue
-            } else {
-                let mut query = fuzzy_finder.get_query().to_string();
-                query.push(c);
-                fuzzy_finder.set_query(query).await;
-                Action::Continue
-            }
-        }
-        KeyCode::Backspace => {
-            let mut query = fuzzy_finder.get_query().to_string();
-            query.pop();
-            fuzzy_finder.set_query(query).await;
-            Action::Continue
-        }
-        KeyCode::Up => {
-            fuzzy_finder.move_cursor(-1);
-            Action::Continue
-        }
-        KeyCode::Down => {
-            fuzzy_finder.move_cursor(1);
-            Action::Continue
-        }
-        KeyCode::Left => {
-            if preview_state.visible {
-                preview_state.focused = false;
-            }
-            Action::Continue
-        }
-        KeyCode::Right => {
-            if preview_state.visible {
-                preview_state.focused = true;
-            }
-            Action::Continue
-        }
-        KeyCode::Tab => {
-            if fuzzy_finder.is_multi_select() {
-                fuzzy_finder.toggle_selection();
-                // Move to next item without wrapping (stop at bottom)
-                fuzzy_finder.move_cursor_clamped(1);
-            }
-            Action::Continue
-        }
-        KeyCode::Enter => {
-            let selected = fuzzy_finder.get_selected_items();
-            if !selected.is_empty() {
-                Action::Select(selected)
-            } else if !fuzzy_finder.is_multi_select()
-                && !fuzzy_finder.get_filtered_items().is_empty()
-            {
-                // In single select mode, select the current item if no items are selected
-                let cursor_pos = fuzzy_finder.get_cursor_position();
-                let current_item = &fuzzy_finder.get_filtered_items()[cursor_pos];
-                let current_idx = fuzzy_finder.get_original_index(cursor_pos).unwrap();
-                Action::Select(vec![(current_idx, current_item.clone())])
-            } else if fuzzy_finder.is_multi_select()
-                && !fuzzy_finder.get_filtered_items().is_empty()
-            {
-                // In multi-select mode, if no items are selected, select the current item
-                let cursor_pos = fuzzy_finder.get_cursor_position();
-                let current_item = &fuzzy_finder.get_filtered_items()[cursor_pos];
-                let current_idx = fuzzy_finder.get_original_index(cursor_pos).unwrap();
-                Action::Select(vec![(current_idx, current_item.clone())])
-            } else {
-                Action::Continue
-            }
-        }
-        KeyCode::Esc => {
-            // Two-stage escape: first clears query, second exits
-            if fuzzy_finder.get_query().is_empty() {
-                Action::Exit
-            } else {
-                fuzzy_finder.set_query(String::new()).await;
-                Action::Continue
-            }
-        }
-        _ => Action::Continue,
-    }
-}
-
-/// Helper for Ctrl+U/D scroll amount in preview pane
-fn available_height_for_preview(preview_state: &PreviewState) -> usize {
-    // Approximate: we don't have config here, use a reasonable default
-    preview_state.lines.len().min(20)
-}
-
 /// Draw highlighted item with fuzzy match highlighting using Gruvbox soft colors
 /// NOTE: This function is kept for testing purposes. Production code uses draw_item_to_buffer.
 #[allow(dead_code)]
@@ -1605,73 +1328,10 @@ fn draw_highlighted_item_with_matches<W: Write>(
     Ok(())
 }
 
-/// Draw an item to the screen buffer with fuzzy match highlighting
-fn draw_item_to_buffer(
-    buffer: &mut ScreenBuffer,
-    row: u16,
-    item: &str,
-    is_cursor: bool,
-    is_selected: bool,
-    match_positions: Option<&crate::fuzzy::finder::MatchPositions>,
-) {
-    let mut col: u16 = 0;
-
-    // Determine base styling for this row
-    let (base_fg, base_bg, base_bold) = if is_cursor {
-        (Some(Color::Yellow), Some(Color::DarkGrey), true)
-    } else {
-        (None, None, false)
-    };
-
-    // Draw selection indicator
-    if is_selected {
-        col += buffer.put_str(col, row, "✓ ", Some(Color::Green), base_bg, false, false);
-    } else {
-        col += buffer.put_str(col, row, "  ", base_fg, base_bg, base_bold, false);
-    }
-
-    // Draw item text with match highlighting
-    if let Some(matches) = match_positions {
-        for (i, ch) in item.chars().enumerate() {
-            if col >= buffer.width() {
-                break;
-            }
-            let is_match = matches.positions.contains(&i);
-            let (fg, bold, underline) = if is_match {
-                if is_cursor {
-                    (Some(Color::White), true, true)
-                } else {
-                    (base_fg, true, true)
-                }
-            } else {
-                (base_fg, base_bold, false)
-            };
-            buffer.put_char(col, row, ch, fg, base_bg, bold, underline);
-            col += 1;
-        }
-    } else {
-        // No match highlighting, just draw the item
-        for ch in item.chars() {
-            if col >= buffer.width() {
-                break;
-            }
-            buffer.put_char(col, row, ch, base_fg, base_bg, base_bold, false);
-            col += 1;
-        }
-    }
-
-    // Fill the rest of the row with background color if cursor is on this row
-    if is_cursor {
-        while col < buffer.width() {
-            buffer.put_char(col, row, ' ', base_fg, base_bg, false, false);
-            col += 1;
-        }
-    }
-}
-
 /// Draw item text with ANSI color support and match highlighting.
 /// `start_col` is where to begin drawing; `max_col` is the right boundary.
 /// Returns the final column after drawing.
+#[allow(clippy::too_many_arguments)]
 fn draw_ansi_item_text(
     buffer: &mut ScreenBuffer,
     row: u16,
@@ -1704,13 +1364,13 @@ fn draw_ansi_item_text(
                     (base_fg, true, true)
                 }
             } else {
-                (
-                    seg_fg.or(base_fg),
-                    base_bold || *seg_bold,
-                    *seg_underline,
-                )
+                (seg_fg.or(base_fg), base_bold || *seg_bold, *seg_underline)
             };
-            let bg = if is_cursor { base_bg } else { seg_bg.or(base_bg) };
+            let bg = if is_cursor {
+                base_bg
+            } else {
+                seg_bg.or(base_bg)
+            };
             buffer.put_char(col, row, ch, fg, bg, bold, underline);
             col += 1;
             clean_idx += 1;
@@ -1748,90 +1408,21 @@ fn draw_item_to_buffer_left(
 
     // Draw item text with ANSI and match highlighting
     col = draw_ansi_item_text(
-        buffer, row, item, col, max_col, is_cursor, base_fg, base_bg, base_bold,
+        buffer,
+        row,
+        item,
+        col,
+        max_col,
+        is_cursor,
+        base_fg,
+        base_bg,
+        base_bold,
         match_positions,
     );
 
     // Fill the rest of the row with background color if cursor is on this row
     if is_cursor {
         while col < max_col {
-            buffer.put_char(col, row, ' ', base_fg, base_bg, false, false);
-            col += 1;
-        }
-    }
-}
-
-/// Draw an item with indicator to the screen buffer
-#[allow(clippy::too_many_arguments)]
-fn draw_item_with_indicator_to_buffer(
-    buffer: &mut ScreenBuffer,
-    row: u16,
-    item: &str,
-    is_cursor: bool,
-    is_selected: bool,
-    match_positions: Option<&crate::fuzzy::finder::MatchPositions>,
-    indicator: Option<&ItemIndicator>,
-    spinner_frame: usize,
-) {
-    let mut col: u16 = 0;
-
-    // Determine base styling for this row
-    let (base_fg, base_bg, base_bold) = if is_cursor {
-        (Some(Color::Yellow), Some(Color::DarkGrey), true)
-    } else {
-        (None, None, false)
-    };
-
-    // Draw indicator prefix
-    match indicator {
-        Some(ItemIndicator::Spinner) => {
-            let frame = SPINNER_FRAMES[spinner_frame % SPINNER_FRAMES.len()];
-            col += buffer.put_str(
-                col,
-                row,
-                &format!("{} ", frame),
-                Some(Color::Yellow),
-                base_bg,
-                false,
-                false,
-            );
-        }
-        Some(ItemIndicator::Text(text)) => {
-            col += buffer.put_str(col, row, text, base_fg, base_bg, base_bold, false);
-            col += buffer.put_str(col, row, " ", base_fg, base_bg, base_bold, false);
-        }
-        Some(ItemIndicator::ColoredText(text, color)) => {
-            col += buffer.put_str(col, row, text, Some(*color), base_bg, false, false);
-            col += buffer.put_str(col, row, " ", base_fg, base_bg, base_bold, false);
-        }
-        Some(ItemIndicator::Success) => {
-            col += buffer.put_str(col, row, "✓ ", Some(Color::Green), base_bg, false, false);
-        }
-        Some(ItemIndicator::Error) => {
-            col += buffer.put_str(col, row, "✗ ", Some(Color::Red), base_bg, false, false);
-        }
-        Some(ItemIndicator::Warning) => {
-            col += buffer.put_str(col, row, "⚠ ", Some(Color::Yellow), base_bg, false, false);
-        }
-        Some(ItemIndicator::None) | None => {
-            // Selection indicator takes precedence when no other indicator
-            if is_selected {
-                col += buffer.put_str(col, row, "✓ ", Some(Color::Green), base_bg, false, false);
-            } else {
-                col += buffer.put_str(col, row, "  ", base_fg, base_bg, base_bold, false);
-            }
-        }
-    }
-
-    // Draw item text with ANSI and match highlighting
-    col = draw_ansi_item_text(
-        buffer, row, item, col, buffer.width(), is_cursor, base_fg, base_bg, base_bold,
-        match_positions,
-    );
-
-    // Fill the rest of the row with background color if cursor is on this row
-    if is_cursor {
-        while col < buffer.width() {
             buffer.put_char(col, row, ' ', base_fg, base_bg, false, false);
             col += 1;
         }
@@ -1902,7 +1493,15 @@ fn draw_item_with_indicator_to_buffer_left(
 
     // Draw item text with ANSI and match highlighting
     col = draw_ansi_item_text(
-        buffer, row, item, col, max_col, is_cursor, base_fg, base_bg, base_bold,
+        buffer,
+        row,
+        item,
+        col,
+        max_col,
+        is_cursor,
+        base_fg,
+        base_bg,
+        base_bold,
         match_positions,
     );
 
@@ -2087,7 +1686,8 @@ mod tests {
         let mut finder = FuzzyFinder::with_items_async(items, false).await;
 
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
-        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
+        let action =
+            events::handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
 
         assert_eq!(action, crate::tui::controls::Action::Exit);
     }
@@ -2104,7 +1704,8 @@ mod tests {
         assert!(finder.get_query().is_empty());
 
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
+        let action =
+            events::handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
 
         assert_eq!(action, crate::tui::controls::Action::Exit);
     }
@@ -2123,7 +1724,8 @@ mod tests {
 
         // First Escape should clear the query, not exit
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
+        let action =
+            events::handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
 
         assert_eq!(action, crate::tui::controls::Action::Continue);
         assert!(finder.get_query().is_empty());
@@ -2144,12 +1746,14 @@ mod tests {
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
 
         // First Escape: clears query
-        let action1 = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
+        let action1 =
+            events::handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
         assert_eq!(action1, crate::tui::controls::Action::Continue);
         assert!(finder.get_query().is_empty());
 
         // Second Escape: exits
-        let action2 = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
+        let action2 =
+            events::handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
         assert_eq!(action2, crate::tui::controls::Action::Exit);
     }
 
@@ -2170,7 +1774,8 @@ mod tests {
 
         // Escape to clear query
         let key_event = crossterm::event::KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
-        let action = handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
+        let action =
+            events::handle_async_key_event(&key_event, &mut finder, &mut PreviewState::new()).await;
 
         assert_eq!(action, crate::tui::controls::Action::Continue);
         assert!(finder.get_query().is_empty());

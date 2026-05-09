@@ -1,5 +1,7 @@
 pub mod buffer;
 pub mod controls;
+pub mod events;
+pub mod layout;
 pub mod preview;
 pub mod ui;
 

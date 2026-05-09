@@ -69,7 +69,7 @@ impl ItemStream {
 
     /// Get all items as a vector
     pub fn get_all_items(&self) -> Vec<String> {
-        self.items.iter().cloned().collect()
+        self.items.to_vec()
     }
 
     /// Check if stream is empty
