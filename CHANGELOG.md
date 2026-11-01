@@ -16,6 +16,14 @@
 
 ### 🚜 Refactor
 
+- Collapse the two near-identical interactive loops into one `run_event_loop`
+  driven by an `ItemFeed` adapter (plain channel or command channel); `ui.rs`
+  drops ~390 lines and one duplicate row renderer
+- Both entry points now share the inline-mode cursor/size fallbacks, so a
+  terminal that cannot report its cursor position falls back to fullscreen
+  instead of failing
+- A producer-set `Ready`/`Custom`/`Hidden` status is no longer overwritten with
+  the configured ready message when the channel closes
 - Split argument handling into `parse_args` (pure) and `resolve_input`
   (positionals + `stdin_piped`), replacing the duplicated TUI action variants
   with `InputSpec::{Stdin,Source,Items}`

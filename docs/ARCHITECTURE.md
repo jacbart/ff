@@ -23,7 +23,7 @@ embeddable Rust library (`ff` crate). Both share the same engine and TUI.
 | `src/fuzzy/finder.rs` | Finder state machine: query, results, selection, cursor, cache. |
 | `src/fuzzy/scoring.rs` | Single-pass subsequence matcher, scoring, tiers, batch sort. |
 | `src/fuzzy/stream.rs` | `ItemStream`: ordered item buffer, keyed by original index. |
-| `src/tui/ui.rs` | Interactive loop, layout, channels, all drawing orchestration. |
+| `src/tui/ui.rs` | Single interactive loop (`run_event_loop`), layout, channels, drawing orchestration. |
 | `src/tui/events.rs` | Key event → `Action` translation (async, used by the loop). |
 | `src/tui/controls.rs` | Legacy synchronous key handler and the `Action` enum. |
 | `src/tui/buffer.rs` | `Cell`/`Style`/`ScreenBuffer`; double-buffered ANSI rendering. |
@@ -79,19 +79,30 @@ tick and appends them to the finder's buffer, which never blocks. The producer
 dropping the sender marks the stream as exhausted, which switches the status line
 from spinner to ready.
 
-### 2.3 Interactive loop (`run_interactive_tui`)
+### 2.3 Interactive loop (`run_event_loop`)
+
+Both public entry points — `run_tui_with_config` (plain items) and
+`run_tui_with_indicators` (commands) — call the same loop. `ItemFeed` adapts the
+receiver: a plain channel maps each item to `TuiCommand::AddItem`, a command
+channel passes messages through. This is the only interactive loop in the code
+base.
 
 Each tick:
 
-1. Drain up to `MAX_BATCH_SIZE = 1000` items from the receiver (`try_recv`) and
-   feed them to `FuzzyFinder::add_items`.
+1. Drain up to `MAX_BATCH_SIZE = 1000` messages from the feed (`try_recv`) and
+   feed new items to `FuzzyFinder::add_items`. Commands update per-item
+   indicators or the global status line.
 2. Drain at most one preview result from the preview channel.
 3. Recompute terminal size and effective `tui_height`.
 4. If dirty: clear `ScreenBuffer`, draw prompt/status, visible rows, preview
    pane, instructions; render to one ANSI string and write+flush **stderr**.
 5. `event::poll(50ms)`; on a key, `events::handle_async_key_event` returns
    `Action::{Continue,Exit,Select}`.
-6. Advance the spinner every 80 ms while the input is still open.
+6. Advance the spinner every 80 ms while items are still streaming or anything
+   is showing a spinner.
+
+When the feed disconnects, a `Loading` status becomes `Ready(ready_message)`; an
+explicit `Ready`/`Custom`/`Hidden` status set by the producer is left alone.
 
 Terminal restoration (leave alternate screen / clear inline rows / show cursor /
 `disable_raw_mode`) runs on every exit path.
@@ -227,7 +238,6 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 
 | Item | Impact |
 |---|---|
-| `run_interactive_tui` and `run_interactive_tui_with_indicators` duplicate ~450 lines | Fixes must be made twice; `ui.rs` is ~1.9k lines. |
 | `controls::handle_key_event` is superseded by `events::handle_async_key_event` | Dead production code kept alive by its own tests. |
 | Dead public helper `process_items` | Kept alive by its own tests. |
 | Per-keystroke cloning and lowercasing (§6) | Latency on large inputs. |
@@ -240,7 +250,7 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 
 ## 9. Testing
 
-- `cargo test` — 258 tests: 186 unit, 64 integration across
+- `cargo test` — 261 tests: 189 unit, 64 integration across
   `tests/{cli,fuzzy,input}_integration_tests.rs`, 8 doc-tests.
 - `tests/cli_integration_tests.rs` also drives the compiled binary through
   `CARGO_BIN_EXE_ff`, so `--filter`, exit codes, and flag parsing are covered

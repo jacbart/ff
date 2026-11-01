@@ -31,7 +31,7 @@ nix build                   # builds ./result/bin/ff
 nix flake check             # build + 1 MiB binary-size check
 nix fmt                     # nixfmt-tree
 
-cargo test                  # 258 tests (unit + integration + doc-tests)
+cargo test                  # 261 tests (unit + integration + doc-tests)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release && ./scripts/check-size.sh target/release/ff
@@ -92,9 +92,9 @@ depend on `tui` or `crossterm`.
 
 ## Known debt (do not make it worse)
 
-- `src/tui/ui.rs` contains two near-identical interactive loops
-  (`run_interactive_tui`, `run_interactive_tui_with_indicators`). Fixes usually
-  need to be applied to both until they are unified.
+- `src/tui/ui.rs` has one event loop (`run_event_loop`) driven by `ItemFeed`,
+  which adapts a plain item channel or a command channel. New TUI behaviour goes
+  there, never into a second loop.
 - `src/tui/controls.rs::handle_key_event` is legacy; the live path is
   `src/tui/events.rs::handle_async_key_event`.
 - The filter hot path clones and lowercases every item on each keystroke — see

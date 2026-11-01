@@ -17,6 +17,7 @@ use crossterm::{
     terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode, size},
 };
 use std::{
+    collections::HashMap,
     io::{self, Write},
     mem,
     time::Instant,
@@ -192,48 +193,88 @@ pub async fn run_tui_with_config(
     multi_select: bool,
     config: TuiConfig,
 ) -> Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>> {
-    run_interactive_tui(items_receiver, multi_select, config).await
+    run_event_loop(ItemFeed::Plain(items_receiver), multi_select, config).await
 }
 
-/// Run the async interactive TUI
-async fn run_interactive_tui(
-    mut items_receiver: mpsc::Receiver<String>,
+/// Result of a non-blocking channel read.
+enum TryNext {
+    /// A message was available.
+    Item(TuiCommand),
+    /// The channel is currently empty.
+    Empty,
+    /// Every sender has been dropped.
+    Disconnected,
+}
+
+/// Item source for the event loop.
+///
+/// The TUI has two public entry points: a plain item channel, and a command
+/// channel with per-item indicators and a global status line. Both drive the
+/// same loop; this adapter hides the difference.
+enum ItemFeed {
+    /// Items without indicators.
+    Plain(mpsc::Receiver<String>),
+    /// Items and indicator/status commands.
+    Command(mpsc::Receiver<TuiCommand>),
+}
+
+impl ItemFeed {
+    /// Read one message without blocking.
+    fn try_next(&mut self) -> TryNext {
+        match self {
+            ItemFeed::Plain(receiver) => match receiver.try_recv() {
+                Ok(item) => TryNext::Item(TuiCommand::AddItem(item)),
+                Err(mpsc::error::TryRecvError::Empty) => TryNext::Empty,
+                Err(mpsc::error::TryRecvError::Disconnected) => TryNext::Disconnected,
+            },
+            ItemFeed::Command(receiver) => match receiver.try_recv() {
+                Ok(command) => TryNext::Item(command),
+                Err(mpsc::error::TryRecvError::Empty) => TryNext::Empty,
+                Err(mpsc::error::TryRecvError::Disconnected) => TryNext::Disconnected,
+            },
+        }
+    }
+}
+
+/// Run the async interactive TUI.
+///
+/// Single implementation behind [`run_tui_with_config`] and
+/// [`run_tui_with_indicators`]: `feed` decides which channel is drained, and
+/// everything else — layout, preview, key handling, terminal restoration — is
+/// shared.
+async fn run_event_loop(
+    mut feed: ItemFeed,
     multi_select: bool,
     config: TuiConfig,
 ) -> Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>> {
     let mut fuzzy_finder = FuzzyFinder::new(multi_select);
     let mut stdout = io::stderr();
 
+    // Per-item indicators storage (keyed by item text)
+    let mut item_indicators: HashMap<String, ItemIndicator> = HashMap::new();
+    let mut global_status = GlobalStatus::Loading(None);
+
     // Enable raw mode and hide cursor
     enable_raw_mode()?;
     execute!(stdout, Hide)?;
 
+    // Inline mode has to know which row it starts on. If the terminal never
+    // answers the cursor query, fall back to fullscreen rather than failing.
     let mut fullscreen = config.fullscreen;
     let mut original_cursor = (0, 0);
-
     if !fullscreen {
-        // Try to get cursor position. If it fails (e.g. stdout is not a TTY),
-        // try to fallback to stderr query or force fullscreen.
         match position() {
             Ok(pos) => original_cursor = pos,
-            Err(_) => {
-                match layout::get_cursor_position_from_stderr() {
-                    Ok(pos) => original_cursor = pos,
-                    Err(_) => {
-                        // Could not determine cursor position, fallback to fullscreen
-                        fullscreen = true;
-                    }
-                }
-            }
+            Err(_) => match layout::get_cursor_position_from_stderr() {
+                Ok(pos) => original_cursor = pos,
+                Err(_) => fullscreen = true,
+            },
         }
     }
 
     let (_term_width, term_height) = match size() {
         Ok(s) => s,
-        Err(_) => {
-            // Fallback for size if stdout is not TTY
-            layout::get_terminal_size_from_stderr().unwrap_or((80, 24))
-        }
+        Err(_) => layout::get_terminal_size_from_stderr().unwrap_or((80, 24)),
     };
     let tui_height = config.calculate_height(term_height);
 
@@ -282,26 +323,51 @@ async fn run_interactive_tui(
     let mut screen_buffer = ScreenBuffer::new(term_width, tui_height);
 
     loop {
-        // Process new items from mpsc receiver
+        // Drain incoming items and commands
         if !receiver_exhausted {
             let mut batch_count = 0;
             const MAX_BATCH_SIZE: usize = 1000;
 
             loop {
-                match items_receiver.try_recv() {
-                    Ok(item) => {
-                        items_buffer.push(item);
+                match feed.try_next() {
+                    TryNext::Item(command) => {
+                        match command {
+                            TuiCommand::AddItem(item) => {
+                                items_buffer.push(item);
+                            }
+                            TuiCommand::AddItemWithIndicator(item, indicator) => {
+                                if indicator != ItemIndicator::None {
+                                    item_indicators.insert(item.clone(), indicator);
+                                }
+                                items_buffer.push(item);
+                            }
+                            TuiCommand::UpdateIndicator(item, indicator) => {
+                                if indicator == ItemIndicator::None {
+                                    item_indicators.remove(&item);
+                                } else {
+                                    item_indicators.insert(item, indicator);
+                                }
+                                needs_redraw = true;
+                            }
+                            TuiCommand::SetGlobalStatus(status) => {
+                                global_status = status;
+                                needs_redraw = true;
+                            }
+                        }
                         batch_count += 1;
                         if batch_count >= MAX_BATCH_SIZE {
                             break;
                         }
                     }
-                    Err(mpsc::error::TryRecvError::Empty) => {
-                        break;
-                    }
-                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                    TryNext::Empty => break,
+                    TryNext::Disconnected => {
                         receiver_exhausted = true;
-                        needs_redraw = true; // Redraw to show ready state
+                        // Only replace a loading status; anything the producer
+                        // set explicitly (Ready/Custom/Hidden) is left alone.
+                        if matches!(global_status, GlobalStatus::Loading(_)) {
+                            global_status = GlobalStatus::Ready(config.ready_message.clone());
+                        }
+                        needs_redraw = true;
                         break;
                     }
                 }
@@ -319,7 +385,7 @@ async fn run_interactive_tui(
             needs_redraw = true;
         }
 
-        let (term_width, term_height) = size()?;
+        let (_term_width, term_height) = size()?;
         let tui_height = config.calculate_height(term_height);
 
         // Determine layout
@@ -359,476 +425,6 @@ async fn run_interactive_tui(
         }
 
         // Ensure scroll offset is valid (e.g. if list shrank)
-        let total_items = fuzzy_finder.get_filtered_items().len();
-        if scroll_offset > total_items {
-            scroll_offset = total_items.saturating_sub(available_height as usize);
-        }
-
-        // Only redraw if needed (when query changes or cursor moves)
-        if needs_redraw {
-            // Resize buffer if terminal size changed
-            let (term_width, _) = size()?;
-            screen_buffer.resize(term_width, tui_height);
-            screen_buffer.clear();
-
-            // Draw search prompt with optional status indicator (row 0 in buffer)
-            let mut col: u16 = 0;
-            col += screen_buffer.put_str(col, 0, "> ", Some(Color::Cyan), None, false, false);
-            col +=
-                screen_buffer.put_str(col, 0, fuzzy_finder.get_query(), None, None, false, false);
-
-            // Draw status indicator (spinner or ready message)
-            if config.show_loading_indicator {
-                col += screen_buffer.put_str(col, 0, " ", None, None, false, false);
-                if !receiver_exhausted {
-                    // Show spinner
-                    let frame = SPINNER_FRAMES[spinner_frame % SPINNER_FRAMES.len()];
-                    col += screen_buffer.put_str(
-                        col,
-                        0,
-                        &frame.to_string(),
-                        Some(Color::Yellow),
-                        None,
-                        false,
-                        false,
-                    );
-                    if let Some(ref msg) = config.loading_message {
-                        col += screen_buffer.put_str(col, 0, " ", None, None, false, false);
-                        screen_buffer.put_str(
-                            col,
-                            0,
-                            msg,
-                            Some(Color::DarkGrey),
-                            None,
-                            false,
-                            false,
-                        );
-                    }
-                } else if let Some(ref msg) = config.ready_message {
-                    // Show ready message
-                    screen_buffer.put_str(col, 0, msg, Some(Color::Green), None, false, false);
-                }
-            }
-
-            // Draw items (confined to left pane when preview is active)
-            if tui_height >= 2 && available_height > 0 {
-                let filtered_items = fuzzy_finder.get_filtered_items();
-                let visible_items = filtered_items
-                    .iter()
-                    .skip(scroll_offset)
-                    .take(available_height as usize);
-
-                for (i, item) in visible_items.enumerate() {
-                    let absolute_index = scroll_offset + i;
-                    let row = (i + 1) as u16; // Row in buffer (0 is prompt)
-
-                    let is_cursor = absolute_index == fuzzy_finder.get_cursor_position();
-                    let original_index = fuzzy_finder.get_original_index(absolute_index);
-                    let is_selected = if let Some(idx) = original_index {
-                        fuzzy_finder.is_selected(idx)
-                    } else {
-                        false
-                    };
-
-                    draw_item_to_buffer_left(
-                        &mut screen_buffer,
-                        row,
-                        item,
-                        is_cursor,
-                        is_selected,
-                        fuzzy_finder.get_match_positions(absolute_index),
-                        left_width,
-                    );
-                }
-            }
-
-            if tui_height < 2 {
-                screen_buffer.put_str(
-                    0,
-                    1,
-                    "Terminal too small. Please resize to continue...",
-                    Some(Color::Yellow),
-                    None,
-                    false,
-                    false,
-                );
-            }
-
-            // Draw separator and preview pane
-            if preview_active {
-                // Vertical separator (heavy when preview is focused)
-                let sep_char = if preview_state.focused { '┃' } else { '│' };
-                for row in 0..tui_height.saturating_sub(1) {
-                    screen_buffer.put_char(
-                        separator_col,
-                        row,
-                        sep_char,
-                        Some(Color::DarkGrey),
-                        None,
-                        preview_state.focused,
-                        false,
-                    );
-                }
-                // Preview content
-                let preview_height = if config.show_help_text {
-                    tui_height.saturating_sub(1)
-                } else {
-                    tui_height
-                };
-                render_preview_to_buffer(
-                    &mut screen_buffer,
-                    &preview_state.lines,
-                    preview_state.scroll,
-                    separator_col + 1,
-                    0,
-                    right_width,
-                    preview_height,
-                    preview_state.loading,
-                    preview_state.error.as_deref(),
-                );
-            }
-
-            // Draw instructions (always at the bottom of the TUI area)
-            if config.show_help_text {
-                let instructions_row = tui_height.saturating_sub(1);
-                let instructions = if preview_active {
-                    if multi_select {
-                        "Tab/Space: Toggle | Enter: Confirm | Ctrl+P: Preview | →/←: Focus | Esc: Exit"
-                    } else {
-                        "↑/↓: Navigate | Enter: Select | Ctrl+P: Preview | →/←: Focus | Esc: Exit"
-                    }
-                } else if multi_select {
-                    "Tab/Space: Toggle | Enter: Confirm | Esc/Ctrl+C/Ctrl+Q: Exit"
-                } else {
-                    "↑/↓: Navigate | Enter: Select | Esc/Ctrl+C/Ctrl+Q: Exit"
-                };
-                screen_buffer.put_str(
-                    0,
-                    instructions_row,
-                    instructions,
-                    Some(Color::DarkGrey),
-                    None,
-                    false,
-                    false,
-                );
-            }
-
-            // Render buffer to terminal in a single write
-            let rendered = if fullscreen {
-                screen_buffer.render_fullscreen()
-            } else {
-                screen_buffer.render(original_cursor.1)
-            };
-            write!(stdout, "{}", rendered)?;
-            stdout.flush()?;
-            needs_redraw = false;
-
-            // Trigger preview on initial load / redraw
-            maybe_update_preview(
-                &fuzzy_finder,
-                &mut preview_state,
-                &config,
-                &preview_tx,
-                &mut preview_task,
-            );
-        }
-
-        // Handle input with timeout to allow stream processing
-        if event::poll(std::time::Duration::from_millis(50))?
-            && let Event::Key(key_event) = event::read()?
-        {
-            let prev_cursor = fuzzy_finder.get_cursor_position();
-            let prev_visible = preview_state.visible;
-            match events::handle_async_key_event(&key_event, &mut fuzzy_finder, &mut preview_state)
-                .await
-            {
-                Action::Continue => {
-                    needs_redraw = true;
-                    // Trigger preview update on cursor move or visibility change
-                    if fuzzy_finder.get_cursor_position() != prev_cursor
-                        || preview_state.visible != prev_visible
-                    {
-                        maybe_update_preview(
-                            &fuzzy_finder,
-                            &mut preview_state,
-                            &config,
-                            &preview_tx,
-                            &mut preview_task,
-                        );
-                    }
-                    continue;
-                }
-                Action::Exit => break,
-                Action::Select(items) => {
-                    selected_items = items;
-                    break;
-                }
-            }
-        }
-
-        // Update spinner animation if still loading
-        if config.show_loading_indicator
-            && !receiver_exhausted
-            && last_spinner_update.elapsed() >= spinner_interval
-        {
-            spinner_frame = (spinner_frame + 1) % SPINNER_FRAMES.len();
-            last_spinner_update = Instant::now();
-            needs_redraw = true;
-        }
-    }
-
-    // Restore terminal
-    if fullscreen {
-        execute!(&mut stdout, crossterm::terminal::LeaveAlternateScreen)?;
-        execute!(&mut stdout, Show)?;
-    } else {
-        for i in 0..config.calculate_height(size()?.1) {
-            execute!(
-                &mut stdout,
-                MoveTo(0, original_cursor.1 + i),
-                Clear(ClearType::CurrentLine)
-            )?;
-        }
-        execute!(
-            &mut stdout,
-            MoveTo(original_cursor.0, original_cursor.1),
-            Show
-        )?;
-        stdout.flush()?;
-    }
-
-    // Restore terminal state
-    disable_raw_mode()?;
-
-    if !selected_items.is_empty() && !fullscreen {
-        // Move to the original cursor position only in inline mode
-        execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
-    }
-
-    Ok(selected_items)
-}
-
-/// Trigger preview update if needed
-fn maybe_update_preview(
-    fuzzy_finder: &FuzzyFinder,
-    preview_state: &mut PreviewState,
-    config: &TuiConfig,
-    preview_sender: &std::sync::mpsc::Sender<PreviewResult>,
-    preview_task: &mut Option<tokio::task::JoinHandle<()>>,
-) {
-    if !preview_state.visible || config.preview_rules.is_empty() {
-        return;
-    }
-    let cursor_pos = fuzzy_finder.get_cursor_position();
-    if cursor_pos >= fuzzy_finder.get_filtered_items().len() {
-        return;
-    }
-    let item = fuzzy_finder.get_filtered_items()[cursor_pos].clone();
-    if item == preview_state.current_item && !preview_state.loading {
-        return;
-    }
-    if let Some(task) = preview_task.take() {
-        task.abort();
-    }
-    preview_state.start_loading(&item);
-    if !preview_state.loading {
-        // Was cached
-        return;
-    }
-    let cmd = build_preview_command(&item, &config.preview_rules);
-    if cmd.is_empty() {
-        preview_state.loading = false;
-        preview_state.error = Some("No preview rule matched".to_string());
-        return;
-    }
-    let sender = preview_sender.clone();
-    let task = spawn_preview_task(cmd, sender);
-    *preview_task = Some(task);
-}
-
-/// Create an mpsc channel for sending items to the TUI
-pub fn create_items_channel() -> (mpsc::Sender<String>, mpsc::Receiver<String>) {
-    mpsc::channel(1000) // Buffer size of 1000 items
-}
-
-/// Create an mpsc channel for sending commands (items with indicators) to the TUI
-pub fn create_command_channel() -> (mpsc::Sender<TuiCommand>, mpsc::Receiver<TuiCommand>) {
-    mpsc::channel(1000) // Buffer size of 1000 commands
-}
-
-/// Run an async interactive TUI with command channel support for per-item indicators
-pub async fn run_tui_with_indicators(
-    command_receiver: mpsc::Receiver<TuiCommand>,
-    multi_select: bool,
-    config: TuiConfig,
-) -> Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>> {
-    run_interactive_tui_with_indicators(command_receiver, multi_select, config).await
-}
-
-/// Run the async interactive TUI with command channel support
-async fn run_interactive_tui_with_indicators(
-    mut command_receiver: mpsc::Receiver<TuiCommand>,
-    multi_select: bool,
-    config: TuiConfig,
-) -> Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>> {
-    let mut fuzzy_finder = FuzzyFinder::new(multi_select);
-    let mut stdout = io::stderr();
-
-    // Per-item indicators storage (keyed by item text)
-    let mut item_indicators: std::collections::HashMap<String, ItemIndicator> =
-        std::collections::HashMap::new();
-    let mut global_status = GlobalStatus::Loading(None);
-
-    // Enable raw mode and hide cursor
-    enable_raw_mode()?;
-    execute!(stdout, Hide)?;
-
-    let fullscreen = config.fullscreen;
-    let mut original_cursor = position()?;
-    let (_term_width, term_height) = size()?;
-    let tui_height = config.calculate_height(term_height);
-
-    if fullscreen {
-        execute!(
-            &mut stdout,
-            crossterm::terminal::EnterAlternateScreen,
-            Clear(ClearType::All)
-        )?;
-    } else {
-        // If not enough space below, scroll the terminal down
-        if original_cursor.1 + tui_height > term_height {
-            let needed = (original_cursor.1 + tui_height).saturating_sub(term_height);
-            for _ in 0..needed {
-                writeln!(stdout)?;
-            }
-            stdout.flush()?;
-            original_cursor = (0, term_height.saturating_sub(tui_height));
-        }
-        execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
-    }
-
-    let mut selected_items = Vec::new();
-    let mut needs_redraw = true;
-    let mut items_buffer = Vec::new();
-    let mut receiver_exhausted = false;
-    let mut scroll_offset = 0;
-
-    // Preview state
-    let mut preview_state = PreviewState::new();
-    if config.preview_auto && !config.preview_rules.is_empty() {
-        preview_state.visible = true;
-    }
-    let (preview_tx, preview_rx) = std::sync::mpsc::channel::<PreviewResult>();
-    let mut preview_task: Option<tokio::task::JoinHandle<()>> = None;
-
-    // Spinner animation state
-    let mut spinner_frame: usize = 0;
-    let mut last_spinner_update = Instant::now();
-    let spinner_interval = std::time::Duration::from_millis(80);
-
-    // Create screen buffer for double-buffered rendering
-    let (term_width, _) = size()?;
-    let mut screen_buffer = ScreenBuffer::new(term_width, tui_height);
-
-    loop {
-        // Process commands from channel
-        if !receiver_exhausted {
-            let mut batch_count = 0;
-            const MAX_BATCH_SIZE: usize = 1000;
-
-            loop {
-                match command_receiver.try_recv() {
-                    Ok(command) => {
-                        match command {
-                            TuiCommand::AddItem(item) => {
-                                items_buffer.push(item);
-                            }
-                            TuiCommand::AddItemWithIndicator(item, indicator) => {
-                                if indicator != ItemIndicator::None {
-                                    item_indicators.insert(item.clone(), indicator);
-                                }
-                                items_buffer.push(item);
-                            }
-                            TuiCommand::UpdateIndicator(item, indicator) => {
-                                if indicator == ItemIndicator::None {
-                                    item_indicators.remove(&item);
-                                } else {
-                                    item_indicators.insert(item, indicator);
-                                }
-                                needs_redraw = true;
-                            }
-                            TuiCommand::SetGlobalStatus(status) => {
-                                global_status = status;
-                                needs_redraw = true;
-                            }
-                        }
-                        batch_count += 1;
-                        if batch_count >= MAX_BATCH_SIZE {
-                            break;
-                        }
-                    }
-                    Err(mpsc::error::TryRecvError::Empty) => {
-                        break;
-                    }
-                    Err(mpsc::error::TryRecvError::Disconnected) => {
-                        receiver_exhausted = true;
-                        global_status = GlobalStatus::Ready(config.ready_message.clone());
-                        needs_redraw = true;
-                        break;
-                    }
-                }
-            }
-
-            if !items_buffer.is_empty() {
-                fuzzy_finder.add_items(mem::take(&mut items_buffer)).await;
-                needs_redraw = true;
-            }
-        }
-
-        // Drain preview results
-        if let Ok(result) = preview_rx.try_recv() {
-            preview_state.apply_result(result);
-            needs_redraw = true;
-        }
-
-        let (_term_width, term_height) = size()?;
-        let tui_height = config.calculate_height(term_height);
-
-        // Determine layout
-        let preview_active =
-            preview_state.visible && !config.preview_rules.is_empty() && term_width >= 40;
-        let left_width = if preview_active {
-            term_width / 2 - 1
-        } else {
-            term_width
-        };
-        let right_width = if preview_active {
-            term_width - left_width - 1
-        } else {
-            0
-        };
-        let separator_col = left_width;
-
-        let available_height = if tui_height > 2 {
-            if config.show_help_text {
-                tui_height - 2
-            } else {
-                tui_height - 1
-            }
-        } else if tui_height == 2 {
-            1
-        } else {
-            0
-        };
-
-        // Update scroll offset to keep cursor in view
-        let cursor_pos = fuzzy_finder.get_cursor_position();
-        if cursor_pos < scroll_offset {
-            scroll_offset = cursor_pos;
-        } else if cursor_pos >= scroll_offset + available_height as usize {
-            scroll_offset = cursor_pos - available_height as usize + 1;
-        }
-
         let total_items = fuzzy_finder.get_filtered_items().len();
         if scroll_offset > total_items {
             scroll_offset = total_items.saturating_sub(available_height as usize);
@@ -1031,7 +627,7 @@ async fn run_interactive_tui_with_indicators(
             );
         }
 
-        // Handle input
+        // Handle input with timeout to allow stream processing
         if event::poll(std::time::Duration::from_millis(50))?
             && let Event::Key(key_event) = event::read()?
         {
@@ -1042,6 +638,7 @@ async fn run_interactive_tui_with_indicators(
             {
                 Action::Continue => {
                     needs_redraw = true;
+                    // Trigger preview update on cursor move or visibility change
                     if fuzzy_finder.get_cursor_position() != prev_cursor
                         || preview_state.visible != prev_visible
                     {
@@ -1063,12 +660,12 @@ async fn run_interactive_tui_with_indicators(
             }
         }
 
-        // Update spinner animation
+        // Update spinner animation while anything is still spinning
         if last_spinner_update.elapsed() >= spinner_interval {
             spinner_frame = (spinner_frame + 1) % SPINNER_FRAMES.len();
             last_spinner_update = Instant::now();
-            // Only redraw if there are any spinning indicators
-            let has_spinners = matches!(global_status, GlobalStatus::Loading(_))
+            let has_spinners = !receiver_exhausted
+                || matches!(global_status, GlobalStatus::Loading(_))
                 || item_indicators
                     .values()
                     .any(|i| matches!(i, ItemIndicator::Spinner));
@@ -1078,7 +675,7 @@ async fn run_interactive_tui_with_indicators(
         }
     }
 
-    // Restore terminal
+    // Restore terminal state
     if fullscreen {
         execute!(&mut stdout, crossterm::terminal::LeaveAlternateScreen)?;
         execute!(&mut stdout, Show)?;
@@ -1100,11 +697,70 @@ async fn run_interactive_tui_with_indicators(
 
     disable_raw_mode()?;
 
-    if !selected_items.is_empty() {
+    // In inline mode, move to the original cursor position so output is not
+    // printed over the TUI area.
+    if !selected_items.is_empty() && !fullscreen {
         execute!(&mut stdout, MoveTo(0, original_cursor.1))?;
     }
 
     Ok(selected_items)
+}
+
+/// Trigger preview update if needed
+fn maybe_update_preview(
+    fuzzy_finder: &FuzzyFinder,
+    preview_state: &mut PreviewState,
+    config: &TuiConfig,
+    preview_sender: &std::sync::mpsc::Sender<PreviewResult>,
+    preview_task: &mut Option<tokio::task::JoinHandle<()>>,
+) {
+    if !preview_state.visible || config.preview_rules.is_empty() {
+        return;
+    }
+    let cursor_pos = fuzzy_finder.get_cursor_position();
+    if cursor_pos >= fuzzy_finder.get_filtered_items().len() {
+        return;
+    }
+    let item = fuzzy_finder.get_filtered_items()[cursor_pos].clone();
+    if item == preview_state.current_item && !preview_state.loading {
+        return;
+    }
+    if let Some(task) = preview_task.take() {
+        task.abort();
+    }
+    preview_state.start_loading(&item);
+    if !preview_state.loading {
+        // Was cached
+        return;
+    }
+    let cmd = build_preview_command(&item, &config.preview_rules);
+    if cmd.is_empty() {
+        preview_state.loading = false;
+        preview_state.error = Some("No preview rule matched".to_string());
+        return;
+    }
+    let sender = preview_sender.clone();
+    let task = spawn_preview_task(cmd, sender);
+    *preview_task = Some(task);
+}
+
+/// Create an mpsc channel for sending items to the TUI
+pub fn create_items_channel() -> (mpsc::Sender<String>, mpsc::Receiver<String>) {
+    mpsc::channel(1000) // Buffer size of 1000 items
+}
+
+/// Create an mpsc channel for sending commands (items with indicators) to the TUI
+pub fn create_command_channel() -> (mpsc::Sender<TuiCommand>, mpsc::Receiver<TuiCommand>) {
+    mpsc::channel(1000) // Buffer size of 1000 commands
+}
+
+/// Run an async interactive TUI with command channel support for per-item indicators
+pub async fn run_tui_with_indicators(
+    command_receiver: mpsc::Receiver<TuiCommand>,
+    multi_select: bool,
+    config: TuiConfig,
+) -> Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>> {
+    run_event_loop(ItemFeed::Command(command_receiver), multi_select, config).await
 }
 
 /// Draw an item with optional per-item indicator
@@ -1370,55 +1026,6 @@ fn draw_ansi_item_text(
     }
 
     col
-}
-
-/// Draw an item to the screen buffer, limited to left pane width
-fn draw_item_to_buffer_left(
-    buffer: &mut ScreenBuffer,
-    row: u16,
-    item: &str,
-    is_cursor: bool,
-    is_selected: bool,
-    match_positions: Option<&crate::fuzzy::finder::MatchPositions>,
-    max_col: u16,
-) {
-    let mut col: u16 = 0;
-
-    // Determine base styling for this row
-    let (base_fg, base_bg, base_bold) = if is_cursor {
-        (Some(Color::Yellow), Some(Color::DarkGrey), true)
-    } else {
-        (None, None, false)
-    };
-
-    // Draw selection indicator
-    if is_selected {
-        col += buffer.put_str(col, row, "✓ ", Some(Color::Green), base_bg, false, false);
-    } else {
-        col += buffer.put_str(col, row, "  ", base_fg, base_bg, base_bold, false);
-    }
-
-    // Draw item text with ANSI and match highlighting
-    col = draw_ansi_item_text(
-        buffer,
-        row,
-        item,
-        col,
-        max_col,
-        is_cursor,
-        base_fg,
-        base_bg,
-        base_bold,
-        match_positions,
-    );
-
-    // Fill the rest of the row with background color if cursor is on this row
-    if is_cursor {
-        while col < max_col {
-            buffer.put_char(col, row, ' ', base_fg, base_bg, false, false);
-            col += 1;
-        }
-    }
 }
 
 /// Draw an item with indicator to the screen buffer, limited to left pane width
@@ -1930,5 +1537,63 @@ mod tests {
         .unwrap();
         let output_str = String::from_utf8(output).unwrap();
         assert!(output_str.contains("[*]"));
+    }
+
+    #[tokio::test]
+    async fn test_plain_feed_maps_items_to_add_item() {
+        let (tx, rx) = mpsc::channel(4);
+        tx.send("alpha".to_string()).await.unwrap();
+
+        let mut feed = ItemFeed::Plain(rx);
+        match feed.try_next() {
+            TryNext::Item(TuiCommand::AddItem(item)) => assert_eq!(item, "alpha"),
+            _ => panic!("expected AddItem"),
+        }
+        assert!(matches!(feed.try_next(), TryNext::Empty));
+
+        drop(tx);
+        assert!(matches!(feed.try_next(), TryNext::Disconnected));
+    }
+
+    #[tokio::test]
+    async fn test_command_feed_passes_commands_through() {
+        let (tx, rx) = mpsc::channel(4);
+        tx.send(TuiCommand::AddItemWithIndicator(
+            "beta".to_string(),
+            ItemIndicator::Success,
+        ))
+        .await
+        .unwrap();
+        tx.send(TuiCommand::SetGlobalStatus(GlobalStatus::Ready(Some(
+            "done".to_string(),
+        ))))
+        .await
+        .unwrap();
+
+        let mut feed = ItemFeed::Command(rx);
+        match feed.try_next() {
+            TryNext::Item(TuiCommand::AddItemWithIndicator(item, indicator)) => {
+                assert_eq!(item, "beta");
+                assert!(matches!(indicator, ItemIndicator::Success));
+            }
+            _ => panic!("expected AddItemWithIndicator"),
+        }
+        assert!(matches!(
+            feed.try_next(),
+            TryNext::Item(TuiCommand::SetGlobalStatus(_))
+        ));
+        assert!(matches!(feed.try_next(), TryNext::Empty));
+
+        drop(tx);
+        assert!(matches!(feed.try_next(), TryNext::Disconnected));
+    }
+
+    #[tokio::test]
+    async fn test_command_feed_reports_disconnect_without_messages() {
+        let (tx, rx) = mpsc::channel::<TuiCommand>(4);
+        drop(tx);
+
+        let mut feed = ItemFeed::Command(rx);
+        assert!(matches!(feed.try_next(), TryNext::Disconnected));
     }
 }
