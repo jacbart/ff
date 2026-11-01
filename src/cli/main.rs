@@ -1,8 +1,10 @@
 use std::env;
 use std::fs;
+use std::path::Path;
 
-use crate::cli::planner::{CliAction, plan_cli_action};
+use crate::cli::planner::{CliAction, InputSpec, RunOptions, plan_cli_action};
 use crate::cli::tty::check_tty_requirements;
+use crate::fuzzy::FuzzyFinder;
 use crate::get_build_info;
 use crate::help;
 use crate::input::{read_input, read_piped_stdin, reopen_stdin_from_tty, send_input_to_channel};
@@ -71,35 +73,6 @@ pub fn process_items(items: Vec<String>) -> Result<Vec<String>, String> {
     Ok(processed_items)
 }
 
-/// Process items asynchronously from various sources including sockets
-pub async fn process_items_async(items: Vec<String>) -> Result<Vec<String>, String> {
-    // If items is a single special source, use async reading
-    let processed_items = if items.len() == 1 {
-        let item = &items[0];
-        if item.starts_with("unix://")
-            || item.starts_with("http://")
-            || item.starts_with("https://")
-        {
-            read_input(item).await.map_err(|e| e.to_string())?
-        } else if let Some(dir_path) = item.strip_prefix("dir:") {
-            // Directory path
-            list_files_in_directory(dir_path)?
-        } else if looks_like_file_path(item) {
-            read_items_from_file(item)?
-        } else {
-            items
-        }
-    } else {
-        items
-    };
-
-    if processed_items.is_empty() {
-        return Err("No items to search through".to_string());
-    }
-
-    Ok(processed_items)
-}
-
 /// Validate that TTY requirements are met for interactive mode.
 pub fn validate_tty_requirements() -> Result<(), String> {
     if !check_tty_requirements() {
@@ -113,60 +86,161 @@ pub fn handle_tui_results(selected: Vec<(usize, String)>) -> Vec<String> {
     selected.into_iter().map(|(_, item)| item).collect()
 }
 
-/// Run async TUI with height configuration and validation using mpsc.
-pub async fn run_async_tui_with_height_validation(
-    items: Vec<String>,
-    multi_select: bool,
-    height: Option<u16>,
-    height_percentage: Option<f32>,
-) -> Result<Vec<String>, String> {
+/// Build the TUI configuration from parsed options.
+fn build_tui_config(options: &RunOptions) -> TuiConfig {
+    TuiConfig {
+        fullscreen: options.height.is_none() && options.height_percentage.is_none(),
+        height: options.height,
+        height_percentage: options.height_percentage,
+        show_help_text: options.show_help_text,
+        show_loading_indicator: true,
+        loading_message: None,
+        ready_message: None,
+        preview_rules: options.preview_rules.clone(),
+        preview_auto: options.preview_auto,
+    }
+}
+
+/// The file a selection came from, when the input was a single local file.
+///
+/// Used to print `file:line` instead of a bare line number.
+fn single_file_source(input: &InputSpec) -> Option<String> {
+    match input {
+        InputSpec::Source(path)
+            if !path.starts_with("unix://")
+                && !path.starts_with("http://")
+                && !path.starts_with("https://") =>
+        {
+            let path = Path::new(path);
+            path.is_file().then(|| path.to_string_lossy().into_owned())
+        }
+        _ => None,
+    }
+}
+
+fn boxed_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
+    Box::new(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        message.into(),
+    ))
+}
+
+/// Print one result, honouring `--line-number`.
+fn print_item(
+    item: Option<&str>,
+    original_index: usize,
+    line_number: bool,
+    source_file: Option<&str>,
+) {
+    if !line_number {
+        if let Some(item) = item {
+            println!("{item}");
+        }
+        return;
+    }
+    match source_file {
+        Some(file) => println!("{}:{}", file, original_index + 1),
+        None => println!("{}", original_index + 1),
+    }
+}
+
+/// Run the interactive TUI.
+fn run_tui(input: InputSpec, options: RunOptions) -> Result<(), Box<dyn std::error::Error>> {
     validate_tty_requirements()?;
 
-    // Create mpsc channel for items
-    let (sender, receiver) = create_items_channel();
-
-    // Spawn task to send items to the channel
-    let items_clone = items.clone();
-    let sender_clone = sender.clone();
-    tokio::spawn(async move {
-        if items_clone.len() == 1 {
-            let item = &items_clone[0];
-            if item.starts_with("unix://")
-                || item.starts_with("http://")
-                || item.starts_with("https://")
-            {
-                let _ = send_input_to_channel(item, sender_clone).await;
-            } else if let Some(dir_path) = item.strip_prefix("dir:") {
-                let _ = send_input_to_channel(&format!("dir:{}", dir_path), sender_clone).await;
-            } else if looks_like_file_path(item) {
-                let _ = send_input_to_channel(item, sender_clone).await;
-            } else {
-                // Direct items
-                for direct_item in items_clone {
-                    let _ = sender_clone.send(direct_item).await;
-                }
-            }
-        } else {
-            // Multiple direct items
-            for direct_item in items_clone {
-                let _ = sender_clone.send(direct_item).await;
-            }
+    // Piped input is consumed before the TUI starts; stdin is then reopened from
+    // /dev/tty so key events can be read.
+    let stdin_items = if matches!(input, InputSpec::Stdin) {
+        let items = read_piped_stdin().map_err(boxed_error)?;
+        if items.is_empty() {
+            return Err(boxed_error("No items provided via stdin"));
         }
-        // Sender will be dropped automatically when the task ends
-    });
-
-    let config = if let Some(h) = height {
-        TuiConfig::with_height(h)
-    } else if let Some(p) = height_percentage {
-        TuiConfig::with_height_percentage(p)
+        reopen_stdin_from_tty().map_err(boxed_error)?;
+        Some(items)
     } else {
-        TuiConfig::fullscreen()
+        None
     };
 
-    match run_tui_with_config(receiver, multi_select, config).await {
-        Ok(selected) => Ok(handle_tui_results(selected)),
-        Err(err) => Err(format!("Async TUI error: {err}")),
+    let source_file = single_file_source(&input);
+    let config = build_tui_config(&options);
+    let multi_select = options.multi_select;
+    let line_number = options.line_number;
+
+    let rt = tokio::runtime::Runtime::new()?;
+    let selected = rt.block_on(async {
+        let (sender, receiver) = create_items_channel();
+
+        match input {
+            InputSpec::Stdin => {
+                let items = stdin_items.unwrap_or_default();
+                tokio::spawn(async move {
+                    for item in items {
+                        let _ = sender.send(item).await;
+                    }
+                });
+            }
+            InputSpec::Source(source) => {
+                tokio::spawn(async move {
+                    let _ = send_input_to_channel(&source, sender).await;
+                });
+            }
+            InputSpec::Items(items) => {
+                tokio::spawn(async move {
+                    for item in items {
+                        let _ = sender.send(item).await;
+                    }
+                });
+            }
+        }
+
+        run_tui_with_config(receiver, multi_select, config)
+            .await
+            .map_err(|e| e as Box<dyn std::error::Error>)
+    })?;
+
+    for (index, item) in selected {
+        print_item(Some(&item), index, line_number, source_file.as_deref());
     }
+    Ok(())
+}
+
+/// Non-interactive filter mode: print every match, exit 1 when nothing matches.
+fn run_filter(
+    input: InputSpec,
+    query: &str,
+    line_number: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let source_file = single_file_source(&input);
+    let rt = tokio::runtime::Runtime::new()?;
+
+    let items = match input {
+        InputSpec::Stdin => read_piped_stdin().map_err(boxed_error)?,
+        InputSpec::Source(source) => rt
+            .block_on(read_input(&source))
+            .map_err(|e| boxed_error(e.to_string()))?,
+        InputSpec::Items(items) => items,
+    };
+
+    let mut finder = rt.block_on(FuzzyFinder::with_items_async(items, false));
+    rt.block_on(finder.set_query(query.to_string()));
+
+    let matches = finder.get_filtered_items();
+    if matches.is_empty() {
+        // fzf-compatible: no matches is a non-zero exit for scripts.
+        std::process::exit(1);
+    }
+
+    for (position, item) in matches.iter().enumerate() {
+        let original_index = finder.get_original_index(position).unwrap_or(position);
+        print_item(
+            Some(item),
+            original_index,
+            line_number,
+            source_file.as_deref(),
+        );
+    }
+
+    Ok(())
 }
 
 /// Run the CLI application.
@@ -181,176 +255,14 @@ pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
             help::print_usage();
             Ok(())
         }
-        CliAction::RunAsyncTui {
-            items,
-            multi_select,
+        CliAction::Run { input, options } => run_tui(input, options),
+        CliAction::Filter {
+            input,
+            query,
             line_number,
-            height,
-            height_percentage,
-            show_help_text,
-            preview_rules,
-            preview_auto,
-        } => {
-            // For async TUI, we need to run it in a tokio runtime
-            validate_tty_requirements()?;
-            let rt = tokio::runtime::Runtime::new()?;
-            let items_for_check = items.clone();
-            let result = rt.block_on(async {
-                // Create mpsc channel for items
-                let (sender, receiver) = create_items_channel();
-
-                // Spawn task to send items to the channel
-                // Move sender directly into the task (don't clone) so channel closes when done
-                let items_clone = items.clone();
-                tokio::spawn(async move {
-                    if items_clone.len() == 1 {
-                        let item = &items_clone[0];
-                        if item.starts_with("unix://")
-                            || item.starts_with("http://")
-                            || item.starts_with("https://")
-                        {
-                            let _ = send_input_to_channel(item, sender).await;
-                        } else if let Some(dir_path) = item.strip_prefix("dir:") {
-                            let _ =
-                                send_input_to_channel(&format!("dir:{}", dir_path), sender).await;
-                        } else if looks_like_file_path(item) {
-                            let _ = send_input_to_channel(item, sender).await;
-                        } else {
-                            // Direct items
-                            for direct_item in items_clone {
-                                let _ = sender.send(direct_item).await;
-                            }
-                        }
-                    } else {
-                        // Multiple direct items
-                        for direct_item in items_clone {
-                            let _ = sender.send(direct_item).await;
-                        }
-                    }
-                    // Sender will be dropped automatically when the task ends
-                });
-
-                let config = TuiConfig {
-                    fullscreen: height.is_none() && height_percentage.is_none(),
-                    height,
-                    height_percentage,
-                    show_help_text,
-                    show_loading_indicator: true,
-                    loading_message: None,
-                    ready_message: None,
-                    preview_rules,
-                    preview_auto,
-                };
-                let selected = run_tui_with_config(receiver, multi_select, config)
-                    .await
-                    .map_err(|e| e as Box<dyn std::error::Error>)?;
-                Ok::<Vec<(usize, String)>, Box<dyn std::error::Error>>(selected)
-            })?;
-
-            // Determine if we are reading from a single file to format output
-            let source_file = if items_for_check.len() == 1 {
-                let path_str = &items_for_check[0];
-                if looks_like_file_path(path_str)
-                    && !path_str.starts_with("dir:")
-                    && !path_str.starts_with("unix://")
-                    && !path_str.starts_with("http://")
-                    && !path_str.starts_with("https://")
-                {
-                    let path = std::path::Path::new(path_str);
-                    if path.exists() && path.is_file() {
-                        Some(path_str.clone())
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            } else {
-                None
-            };
-
-            // Print each selected item
-            for (idx, item) in result {
-                if line_number {
-                    if let Some(ref file) = source_file {
-                        println!("{}:{1}", file, idx + 1);
-                    } else {
-                        println!("{}", idx + 1);
-                    }
-                } else {
-                    println!("{item}");
-                }
-            }
-            Ok(())
-        }
-        CliAction::RunAsyncTuiFromStdin {
-            multi_select,
-            line_number,
-            height,
-            height_percentage,
-            show_help_text,
-            preview_rules,
-            preview_auto,
-        } => {
-            validate_tty_requirements()?;
-
-            let items = read_piped_stdin().map_err(|e| {
-                Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
-                    as Box<dyn std::error::Error>
-            })?;
-
-            if items.is_empty() {
-                return Err(Box::new(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    "No items provided via stdin",
-                )));
-            }
-
-            // Reopen stdin from /dev/tty so crossterm can read keyboard events.
-            // Piped stdin has been fully consumed above; now we need a real TTY
-            // on fd 0 for enable_raw_mode() and event::poll()/event::read().
-            reopen_stdin_from_tty()
-                .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)?;
-
-            let rt = tokio::runtime::Runtime::new()?;
-            let result = rt.block_on(async {
-                let (sender, receiver) = create_items_channel();
-
-                let items_clone = items.clone();
-                tokio::spawn(async move {
-                    for item in items_clone {
-                        let _ = sender.send(item).await;
-                    }
-                });
-
-                let config = TuiConfig {
-                    fullscreen: height.is_none() && height_percentage.is_none(),
-                    height,
-                    height_percentage,
-                    show_help_text,
-                    show_loading_indicator: true,
-                    loading_message: None,
-                    ready_message: None,
-                    preview_rules,
-                    preview_auto,
-                };
-                let selected = run_tui_with_config(receiver, multi_select, config)
-                    .await
-                    .map_err(|e| e as Box<dyn std::error::Error>)?;
-                Ok::<Vec<(usize, String)>, Box<dyn std::error::Error>>(selected)
-            })?;
-
-            for (idx, item) in result {
-                if line_number {
-                    println!("{}", idx + 1);
-                } else {
-                    println!("{item}");
-                }
-            }
-            Ok(())
-        }
-        CliAction::Error(msg) => {
-            eprintln!("Error: {msg}");
+        } => run_filter(input, &query, line_number),
+        CliAction::Error(message) => {
+            eprintln!("Error: {message}");
             std::process::exit(1);
         }
     }

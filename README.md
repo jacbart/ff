@@ -28,12 +28,18 @@ ff [OPTIONS] [INPUT]
 |------|-------------|
 | `-m`, `--multi-select` | Enable multi-select mode |
 | `-n`, `--line-number` | Output line numbers (`file:line` for file input) |
+| `-f`, `--filter <QUERY>` | Print matches and exit, no TUI (exit 1 when nothing matches) |
 | `--height <N>` | Set TUI height in lines (non-fullscreen) |
 | `--height-percentage <N>` | Set TUI height as % of terminal (non-fullscreen) |
 | `-p`, `--preview <cmd>` | Preview command (repeatable, `{ext1,ext2}` for filters, `auto` for smart mode) |
 | `--preview-auto` | Auto-show preview on cursor move |
+| `--help-text` | Show the keyboard help inside the TUI |
 | `-h`, `--help` | Show help message |
 | `-V`, `--version` | Show version information |
+
+Flags may appear before, after, or between inputs. `--` ends flag parsing, so
+`ff -- --file-starting-with-dashes` treats the rest as items. Explicit inputs win
+over piped stdin, so `ff file.txt` behaves the same inside a pipeline.
 
 ### Examples
 
@@ -63,6 +69,21 @@ ls | ff -p auto --preview-auto
 
 # Preview with custom rules
 ls | ff -p 'bat --color=always {rs,toml}' -p 'glow {md}' -p 'cat' --preview-auto
+```
+
+### Non-interactive filtering
+
+`--filter` prints every match and exits, so ff can drive scripts and pipelines:
+
+```bash
+# Print matches without a TUI
+git ls-files | ff --filter src/
+
+# Filter a directory listing
+ff --filter help ./src/
+
+# Use the exit code in a script (1 when nothing matches)
+if ff --filter wip list.txt >/dev/null; then echo "found work in progress"; fi
 ```
 
 ### Input Sources

@@ -31,7 +31,7 @@ nix build                   # builds ./result/bin/ff
 nix flake check             # build + 1 MiB binary-size check
 nix fmt                     # nixfmt-tree
 
-cargo test                  # 227 tests (unit + integration + doc-tests)
+cargo test                  # 258 tests (unit + integration + doc-tests)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release && ./scripts/check-size.sh target/release/ff
@@ -79,11 +79,14 @@ depend on `tui` or `crossterm`.
 
 - New behaviour needs a test. Unit tests live next to the code; integration
   tests go in `tests/`.
+- CLI behaviour (flag parsing, exit codes, `--filter`) is tested end-to-end by
+  running the compiled binary via `CARGO_BIN_EXE_ff` in
+  `tests/cli_integration_tests.rs` — no TTY needed.
 - Fuzzy ranking changes must keep `tests/fuzzy_integration_tests.rs` and the
   tier tests in `src/fuzzy/scoring.rs` green, and should add a case that pins
   the expected ordering.
-- CLI parsing changes belong in `src/cli/planner.rs` (pure function, easy to
-  test) rather than in `cli_main`.
+- CLI parsing changes belong in `src/cli/planner.rs` (`parse_args` and
+  `resolve_input` are pure and easy to test) rather than in `cli_main`.
 - Terminal interaction is not covered by automated tests. Manually verify with:
   `ff file.txt`, `ls | ff`, `ff file.txt --height 10`, and `-p 'cat' --preview-auto`.
 

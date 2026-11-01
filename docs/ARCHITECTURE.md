@@ -42,19 +42,25 @@ used by `cli` and `tui`-adjacent helpers. `fuzzy` never depends on `tui`.
 ```
 argv
  └─ ff::cli_main()                       src/cli/main.rs
-     ├─ planner::plan_cli_action(&args) → CliAction::{ShowVersion,ShowHelp,
-     │                                     RunAsyncTui, RunAsyncTuiFromStdin, Error}
-     ├─ validate_tty_requirements()      // stderr must be a TTY
-     ├─ input source resolution
-     │    piped stdin → read_piped_stdin() + reopen_stdin_from_tty() (dup2 /dev/tty → fd 0)
-     │    file/dir/url/inline → producer task
-     └─ tui::run_tui_with_config(rx, multi_select, TuiConfig)
-          └─ Result<Vec<(original_index, String)>>
-               └─ println! to stdout (optionally with line numbers)
+     ├─ planner::plan_cli_action(&args) → CliAction::{ShowVersion,ShowHelp,Run,Filter,Error}
+     │    ├─ parse_args(&args)           // flags + positionals; pure
+     │    └─ resolve_input(positionals, stdin_piped) → InputSpec::{Stdin,Source,Items}
+     ├─ ShowHelp / ShowVersion            // win over every other flag
+     ├─ Filter { input, query }           // no TTY needed: print matches, exit 1 if none
+     └─ Run { input, options }
+          ├─ validate_tty_requirements() // stderr must be a TTY
+          ├─ Stdin → read_piped_stdin() + reopen_stdin_from_tty() (dup2 /dev/tty → fd 0)
+          ├─ Source/Items → producer task
+          └─ tui::run_tui_with_config(rx, multi_select, TuiConfig)
+               └─ Result<Vec<(original_index, String)>>
+                    └─ println! to stdout (optionally with line numbers)
 ```
 
-`plan_cli_action` is pure and unit-tested; it decides between stdin mode and
-argument mode via `tty::is_stdin_piped()`.
+`parse_args` never touches the filesystem or the environment, so it is fully
+unit-tested; `resolve_input` takes `stdin_piped` as a parameter for the same
+reason. Explicit positionals win over piped stdin, so `ff file.txt` behaves the
+same inside a pipeline as it does interactively. Flags may appear before, after,
+or between positionals, and `--` ends flag parsing.
 
 ### 2.2 Item ingestion
 
@@ -223,17 +229,22 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 |---|---|
 | `run_interactive_tui` and `run_interactive_tui_with_indicators` duplicate ~450 lines | Fixes must be made twice; `ui.rs` is ~1.9k lines. |
 | `controls::handle_key_event` is superseded by `events::handle_async_key_event` | Dead production code kept alive by its own tests. |
-| Dead public helpers: `process_items_async`, `run_async_tui_with_height_validation`, `create_stream_from_items` | Misleading API surface. |
+| Dead public helper `process_items` | Kept alive by its own tests. |
 | Per-keystroke cloning and lowercasing (§6) | Latency on large inputs. |
 | No feature flags | Library users pay for the terminal stack. |
+| Preview cancel is a no-op (`spawn_blocking` + `abort`) and has no timeout | Cursor movement can orphan `sh -c` children. |
+| Inline mode blocks on a cursor-position (DSR) query | A terminal that never answers makes `--height` hang. |
 | `README`/`lib.rs` used to claim LSH and quicksort | Corrected; scoring uses a tiered stable sort. |
 
 ---
 
 ## 9. Testing
 
-- `cargo test` — 227 tests: 163 unit, 56 integration across
+- `cargo test` — 258 tests: 186 unit, 64 integration across
   `tests/{cli,fuzzy,input}_integration_tests.rs`, 8 doc-tests.
+- `tests/cli_integration_tests.rs` also drives the compiled binary through
+  `CARGO_BIN_EXE_ff`, so `--filter`, exit codes, and flag parsing are covered
+  end-to-end without a TTY.
 - `cargo clippy --all-targets -- -D warnings` — must stay clean.
 - `cargo fmt --check` — edition 2024 formatting.
 - `nix build` / `nix flake check` — build plus size budget.

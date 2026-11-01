@@ -1,3 +1,34 @@
+## [Unreleased]
+
+### 🐛 Fixed
+
+- Freeze on more than 1000 input items: `ItemStream` mirrored every item into an
+  undrained channel and blocked forever once it filled
+
+### 🚀 Features
+
+- `-f/--filter <QUERY>` prints matches and exits without a TUI, exiting 1 when
+  nothing matches
+- Flags may appear before, after, or between inputs; `--` ends flag parsing and
+  a lone `-` reads stdin
+- Unknown flags are rejected instead of being treated as the input source
+- Combined short flags (`-mn`) and inline values (`--height=10`, `-pbat`) work
+
+### 🚜 Refactor
+
+- Split argument handling into `parse_args` (pure) and `resolve_input`
+  (positionals + `stdin_piped`), replacing the duplicated TUI action variants
+  with `InputSpec::{Stdin,Source,Items}`
+- Explicit inputs now win over piped stdin, so `ff file.txt` behaves the same in
+  a pipeline
+
+### 🗑️ Removed
+
+- Unused `ItemStream` stream helpers (`stream`, `filtered_stream`, `process_async`,
+  `receive`) and `process_vector_as_stream`
+- `futures` dependency, which was only used by those helpers
+- Dead `process_items_async` and `run_async_tui_with_height_validation`
+
 ## [1.1.0] - 2026-11-01
 
 ### 🐛 Bug Fixes
