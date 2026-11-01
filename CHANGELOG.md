@@ -1,5 +1,16 @@
 ## [Unreleased]
 
+### 🐛 Fixed
+
+- Freeze on more than 1000 input items: `ItemStream` mirrored every item into an
+  undrained channel and blocked forever once it filled
+
+### 🗑️ Removed
+
+- Unused `ItemStream` stream helpers (`stream`, `filtered_stream`, `process_async`,
+  `receive`) and `process_vector_as_stream`
+- `futures` dependency, which was only used by those helpers
+
 ### 🚜 Refactor
 
 - Pin Rust 1.99.0 in `rust-toolchain.toml` (single source of truth) and read it from `flake.nix`

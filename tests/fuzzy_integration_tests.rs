@@ -440,3 +440,25 @@ async fn test_match_positions() {
         assert!(match_pos.score > 0);
     }
 }
+
+/// Regression test for the >1000-item freeze: a file larger than the old
+/// internal channel capacity used to hang the TUI on the second ingest batch.
+#[tokio::test]
+async fn test_ingest_more_than_1000_items_in_batches() {
+    let mut finder = FuzzyFinder::new(false);
+    let timeout = std::time::Duration::from_secs(5);
+
+    for batch in 0..5 {
+        let items: Vec<String> = (0..1000)
+            .map(|i| format!("src/file{batch}_{i}.rs"))
+            .collect();
+        tokio::time::timeout(timeout, finder.add_items(items))
+            .await
+            .expect("item ingestion blocked on a batch beyond the old 1000-item limit");
+    }
+
+    assert_eq!(finder.get_filtered_items().len(), 5_000);
+
+    finder.set_query("file3_".to_string()).await;
+    assert_eq!(finder.get_filtered_items().len(), 1_000);
+}

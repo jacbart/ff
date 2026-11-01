@@ -22,7 +22,7 @@ embeddable Rust library (`ff` crate). Both share the same engine and TUI.
 | `src/input.rs` | Input sources: file, directory, `unix://`, `http(s)://`, inline, piped stdin. |
 | `src/fuzzy/finder.rs` | Finder state machine: query, results, selection, cursor, cache. |
 | `src/fuzzy/scoring.rs` | Single-pass subsequence matcher, scoring, tiers, batch sort. |
-| `src/fuzzy/stream.rs` | `ItemStream`: item buffer plus an mpsc mirror. |
+| `src/fuzzy/stream.rs` | `ItemStream`: ordered item buffer, keyed by original index. |
 | `src/tui/ui.rs` | Interactive loop, layout, channels, all drawing orchestration. |
 | `src/tui/events.rs` | Key event → `Action` translation (async, used by the loop). |
 | `src/tui/controls.rs` | Legacy synchronous key handler and the `Action` enum. |
@@ -68,9 +68,10 @@ argument mode via `tty::is_stdin_piped()`.
 | existing path | File lines, or directory listing |
 | anything else | Whitespace-split inline items |
 
-Items cross `mpsc::channel(1000)` into the TUI. The producer dropping the sender
-marks the stream as exhausted, which switches the status line from spinner to
-ready.
+Items cross `mpsc::channel(1000)` into the TUI; the TUI drains up to 1000 per
+tick and appends them to the finder's buffer, which never blocks. The producer
+dropping the sender marks the stream as exhausted, which switches the status line
+from spinner to ready.
 
 ### 2.3 Interactive loop (`run_interactive_tui`)
 
@@ -167,8 +168,8 @@ MatchTier: Exact > Prefix > Substring > Fuzzy
   `PreviewRule`.
 - Sessions: `FuzzyFinderSession`, `FuzzyFinderWithIndicators`, `SessionResult`.
 
-All of these are unconditional: a library consumer always links `crossterm`,
-`tokio`, and `futures`. Feature-gating the TUI is on the roadmap (see §8).
+All of these are unconditional: a library consumer always links `crossterm` and
+`tokio`. Feature-gating the TUI is on the roadmap (see §8).
 
 ---
 
@@ -195,9 +196,9 @@ Improvements, in order of expected impact:
 3. Return indices from `score_batch` and avoid cloning display strings.
 4. Cap `query_cache` (LRU or clear on threshold).
 
-`ItemStream` currently duplicates every item into an mpsc channel that nothing
-reads (`receive` is never called in the TUI path); removing it halves per-item
-storage.
+Item ingestion itself is O(1) per item and never blocks: `ItemStream` is a
+plain `Vec<String>`. (It used to mirror every item into an `mpsc` channel that
+nothing drained, which froze the TUI once 1000 items had accumulated.)
 
 ---
 
@@ -211,8 +212,8 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
   `panic = "abort"`, `strip = true`.
 - Reference sizes (aarch64-darwin, Rust 1.99.0): ~704 KiB via cargo,
   ~820 KiB via `nix build`.
-- If the budget is exceeded, prefer removing a dependency (`futures` is only
-  used for `join_all`) or trimming `tokio` features before changing `opt-level`.
+- If the budget is exceeded, prefer removing a dependency or trimming `tokio`
+  features before changing `opt-level`.
 
 ---
 
@@ -231,7 +232,7 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 
 ## 9. Testing
 
-- `cargo test` — 224 tests: 161 unit, 55 integration across
+- `cargo test` — 227 tests: 163 unit, 56 integration across
   `tests/{cli,fuzzy,input}_integration_tests.rs`, 8 doc-tests.
 - `cargo clippy --all-targets -- -D warnings` — must stay clean.
 - `cargo fmt --check` — edition 2024 formatting.

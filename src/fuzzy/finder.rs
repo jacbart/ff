@@ -124,7 +124,7 @@ impl FuzzyFinder {
 
     /// Add new items asynchronously
     pub async fn add_items(&mut self, new_items: Vec<String>) {
-        self.stream.add_items(new_items).await;
+        self.stream.add_items(new_items);
         // Clear cache when items change
         self.query_cache.clear();
         self.update_filter().await;
@@ -290,6 +290,36 @@ mod tests {
         finder.add_items(new_items).await;
         let all_items = finder.get_filtered_items();
         assert!(all_items.len() >= 3);
+    }
+
+    /// Regression test: the TUI feeds items in batches of up to 1000, and item
+    /// ingestion used to block forever once 1000 items had accumulated.
+    #[tokio::test]
+    async fn test_add_items_in_batches_does_not_block() {
+        let mut finder = FuzzyFinder::new(false);
+        let timeout = std::time::Duration::from_secs(5);
+
+        for batch in 0..10 {
+            let items: Vec<String> = (0..1000).map(|i| format!("item{batch}-{i}")).collect();
+            tokio::time::timeout(timeout, finder.add_items(items))
+                .await
+                .expect("add_items hung: item ingestion must never block");
+        }
+
+        assert_eq!(finder.get_filtered_items().len(), 10_000);
+    }
+
+    /// Regression test: a single large batch must not block either.
+    #[tokio::test]
+    async fn test_add_items_large_batch_does_not_block() {
+        let mut finder = FuzzyFinder::new(false);
+        let items: Vec<String> = (0..10_000).map(|i| format!("item{i}")).collect();
+
+        tokio::time::timeout(std::time::Duration::from_secs(5), finder.add_items(items))
+            .await
+            .expect("add_items hung: item ingestion must never block");
+
+        assert_eq!(finder.get_filtered_items().len(), 10_000);
     }
 
     #[tokio::test]
