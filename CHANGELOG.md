@@ -1,29 +1,22 @@
-## [Unreleased]
+## [1.1.0] - 2026-11-01
 
-### 🐛 Fixed
+### 🐛 Bug Fixes
 
-- Freeze on more than 1000 input items: `ItemStream` mirrored every item into an
-  undrained channel and blocked forever once it filled
-
-### 🗑️ Removed
-
-- Unused `ItemStream` stream helpers (`stream`, `filtered_stream`, `process_async`,
-  `receive`) and `process_vector_as_stream`
-- `futures` dependency, which was only used by those helpers
-
-### 🚜 Refactor
-
-- Pin Rust 1.99.0 in `rust-toolchain.toml` (single source of truth) and read it from `flake.nix`
-- Migrate the crate to edition 2024
-- Add `docs/ARCHITECTURE.md` and `AGENTS.md`
-- Enforce a 1 MiB binary budget with `scripts/check-size.sh`, a Nix check, and CI
-- Correct stale LSH/quicksort claims in the library docs
+- Stop the TUI freezing once more than 1000 items are ingested
 
 ### ⚙️ Miscellaneous Tasks
 
-- Update flake inputs (nixpkgs 26.11, rust-overlay); drop the `x86_64-darwin`
-  target, which nixpkgs 26.11 no longer supports
+- *(toolchain)* Bump to Rust 1.99.0, edition 2024, docs and 1 MiB size gate
+## [1.0.14] - 2026-05-09
 
+### 🚀 Features
+
+- Preview commands per extension and defaults
+- Improvements to preview panel and flags, auto/smart mode for preview panel added
+
+### 🚜 Refactor
+
+- Update locks and reorganized some of the larger files, removed repeated func and formatted code, version bump
 ## [1.0.13] - 2026-02-23
 
 ### 🚜 Refactor
