@@ -192,7 +192,7 @@ fn find_optimal_positions(item_chars: &[char], query_chars: &[char]) -> Option<V
         let positions: Vec<usize> = item_chars
             .iter()
             .enumerate()
-            .filter(|(_, &ic)| ic == qc)
+            .filter(|&(_, &ic)| ic == qc)
             .map(|(i, _)| i)
             .collect();
 

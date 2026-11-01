@@ -50,7 +50,7 @@ pub fn process_stdin_content(content: &str) -> Result<Vec<String>, String> {
 
 /// Read piped stdin synchronously before async runtime.
 pub fn read_piped_stdin() -> Result<Vec<String>, String> {
-    use std::io::{stdin, Read};
+    use std::io::{Read, stdin};
     let mut input = String::new();
     let mut stdin = stdin();
     if stdin.is_terminal() {
@@ -189,10 +189,10 @@ async fn read_from_directory(dir_path: &str) -> Result<Vec<String>, Box<dyn std:
     let mut items = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
-        if let Some(name) = path.file_name() {
-            if let Some(name_str) = name.to_str() {
-                items.push(name_str.to_string());
-            }
+        if let Some(name) = path.file_name()
+            && let Some(name_str) = name.to_str()
+        {
+            items.push(name_str.to_string());
         }
     }
 
@@ -277,12 +277,11 @@ async fn send_from_directory(
 
     while let Some(entry) = entries.next_entry().await? {
         let path = entry.path();
-        if let Some(name) = path.file_name() {
-            if let Some(name_str) = name.to_str() {
-                if sender.send(name_str.trim().to_string()).await.is_err() {
-                    break; // Channel closed
-                }
-            }
+        if let Some(name) = path.file_name()
+            && let Some(name_str) = name.to_str()
+            && sender.send(name_str.trim().to_string()).await.is_err()
+        {
+            break; // Channel closed
         }
     }
 

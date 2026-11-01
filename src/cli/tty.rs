@@ -1,4 +1,4 @@
-use std::io::{stderr, stdin, stdout, IsTerminal};
+use std::io::{IsTerminal, stderr, stdin, stdout};
 
 /// Check if stdin is a TTY.
 pub fn is_stdin_tty() -> bool {

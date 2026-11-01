@@ -1,7 +1,8 @@
 [package]
 name = "ff"
 version = "1.0.14"
-edition = "2021"
+edition = "2024"
+rust-version = "1.99"
 description = "A small fuzzy finder for the terminal"
 authors = ["jacbart"]
 license = "MIT"

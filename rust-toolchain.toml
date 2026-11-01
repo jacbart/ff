@@ -1,0 +1,6 @@
+[toolchain]
+# Single source of truth for the Rust version used by this project.
+# flake.nix reads `channel` from this file, so bump it here only.
+channel = "1.99.0"
+components = ["rustfmt", "clippy", "rust-src", "rust-analyzer"]
+profile = "minimal"

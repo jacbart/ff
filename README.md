@@ -170,6 +170,22 @@ let config = TuiConfig {
 let (session, tui_future) = FuzzyFinderSession::with_config(true, config);
 ```
 
+## Development
+
+See [`AGENTS.md`](AGENTS.md) for commands and contribution rules, and
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the engine, TUI, and CLI
+fit together.
+
+```bash
+nix develop            # pinned toolchain dev shell
+nix build              # ./result/bin/ff
+nix flake check        # build + 1 MiB binary-size budget
+cargo test             # unit, integration, and doc tests
+```
+
+The release binary is budgeted at **under 1 MiB**; `scripts/check-size.sh`
+enforces it and fails CI if the budget is exceeded.
+
 ## License
 
 MIT License - see LICENSE file for details.

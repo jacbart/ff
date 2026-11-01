@@ -1,11 +1,11 @@
 //! # ff - Fuzzy Finder Library
 //!
-//! A fast, lightweight fuzzy finder library with async streaming, LSH, and quicksort.
+//! A fast, lightweight fuzzy finder library with async streaming.
 //!
 //! ## Features
 //! - Async fuzzy matching with streaming
-//! - Locality Sensitive Hashing (LSH) for similarity grouping
-//! - Quicksort for fast result sorting
+//! - Single-pass subsequence matcher with tiered ranking
+//!   (exact > prefix > substring > fuzzy)
 //! - Multi-select support
 //! - TUI interface with keyboard navigation
 //! - Configurable height for the TUI
@@ -36,9 +36,9 @@ use tokio::sync::mpsc;
 
 // === Public API Exports ===
 
-/// Async fuzzy finder with streaming capabilities, LSH, and quicksort.
+/// Async fuzzy finder with streaming capabilities and tiered scoring.
 ///
-/// Supports async operations, locality sensitive hashing, and efficient sorting.
+/// Supports async operations, streaming item ingestion, and efficient sorting.
 ///
 /// # Example
 /// ```no_run

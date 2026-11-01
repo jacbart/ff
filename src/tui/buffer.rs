@@ -269,21 +269,23 @@ impl ScreenBuffer {
                 }
 
                 // Apply foreground color if changed
-                if cell.fg != current_fg && cell.fg.is_some() {
-                    if let Some(color) = cell.fg {
-                        write_fg_color(&mut output, color);
-                        current_fg = cell.fg;
-                        style_changed = true;
-                    }
+                if cell.fg != current_fg
+                    && cell.fg.is_some()
+                    && let Some(color) = cell.fg
+                {
+                    write_fg_color(&mut output, color);
+                    current_fg = cell.fg;
+                    style_changed = true;
                 }
 
                 // Apply background color if changed
-                if cell.bg != current_bg && cell.bg.is_some() {
-                    if let Some(color) = cell.bg {
-                        write_bg_color(&mut output, color);
-                        current_bg = cell.bg;
-                        style_changed = true;
-                    }
+                if cell.bg != current_bg
+                    && cell.bg.is_some()
+                    && let Some(color) = cell.bg
+                {
+                    write_bg_color(&mut output, color);
+                    current_bg = cell.bg;
+                    style_changed = true;
                 }
 
                 let _ = style_changed; // Suppress warning
@@ -342,18 +344,20 @@ impl ScreenBuffer {
                     current_underline = true;
                 }
 
-                if cell.fg != current_fg && cell.fg.is_some() {
-                    if let Some(color) = cell.fg {
-                        write_fg_color(&mut output, color);
-                        current_fg = cell.fg;
-                    }
+                if cell.fg != current_fg
+                    && cell.fg.is_some()
+                    && let Some(color) = cell.fg
+                {
+                    write_fg_color(&mut output, color);
+                    current_fg = cell.fg;
                 }
 
-                if cell.bg != current_bg && cell.bg.is_some() {
-                    if let Some(color) = cell.bg {
-                        write_bg_color(&mut output, color);
-                        current_bg = cell.bg;
-                    }
+                if cell.bg != current_bg
+                    && cell.bg.is_some()
+                    && let Some(color) = cell.bg
+                {
+                    write_bg_color(&mut output, color);
+                    current_bg = cell.bg;
                 }
 
                 output.push(cell.ch);

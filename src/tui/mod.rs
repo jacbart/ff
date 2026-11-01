@@ -6,8 +6,8 @@ pub mod preview;
 pub mod ui;
 
 pub use buffer::ScreenBuffer;
-pub use preview::{parse_ansi_output, PreviewResult, PreviewRule, PreviewState, StyledLine};
+pub use preview::{PreviewResult, PreviewRule, PreviewState, StyledLine, parse_ansi_output};
 pub use ui::{
-    create_command_channel, create_items_channel, run_tui, run_tui_with_config,
-    run_tui_with_indicators, GlobalStatus, ItemIndicator, TuiCommand, TuiConfig,
+    GlobalStatus, ItemIndicator, TuiCommand, TuiConfig, create_command_channel,
+    create_items_channel, run_tui, run_tui_with_config, run_tui_with_indicators,
 };

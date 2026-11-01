@@ -4,17 +4,17 @@ use crate::tui::controls::Action;
 use crate::tui::events;
 use crate::tui::layout;
 use crate::tui::preview::{
-    build_preview_command, parse_ansi_output, render_preview_to_buffer, spawn_preview_task,
-    PreviewResult, PreviewState,
+    PreviewResult, PreviewState, build_preview_command, parse_ansi_output,
+    render_preview_to_buffer, spawn_preview_task,
 };
 use crossterm::{
-    cursor::{position, Hide, MoveTo, Show},
+    cursor::{Hide, MoveTo, Show, position},
     event::{self, Event},
     execute,
     style::{
         Attribute, Color, Print, ResetColor, SetAttribute, SetBackgroundColor, SetForegroundColor,
     },
-    terminal::{disable_raw_mode, enable_raw_mode, size, Clear, ClearType},
+    terminal::{Clear, ClearType, disable_raw_mode, enable_raw_mode, size},
 };
 use std::{
     io::{self, Write},
@@ -534,38 +534,34 @@ async fn run_interactive_tui(
         }
 
         // Handle input with timeout to allow stream processing
-        if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key_event) = event::read()? {
-                let prev_cursor = fuzzy_finder.get_cursor_position();
-                let prev_visible = preview_state.visible;
-                match events::handle_async_key_event(
-                    &key_event,
-                    &mut fuzzy_finder,
-                    &mut preview_state,
-                )
+        if event::poll(std::time::Duration::from_millis(50))?
+            && let Event::Key(key_event) = event::read()?
+        {
+            let prev_cursor = fuzzy_finder.get_cursor_position();
+            let prev_visible = preview_state.visible;
+            match events::handle_async_key_event(&key_event, &mut fuzzy_finder, &mut preview_state)
                 .await
-                {
-                    Action::Continue => {
-                        needs_redraw = true;
-                        // Trigger preview update on cursor move or visibility change
-                        if fuzzy_finder.get_cursor_position() != prev_cursor
-                            || preview_state.visible != prev_visible
-                        {
-                            maybe_update_preview(
-                                &fuzzy_finder,
-                                &mut preview_state,
-                                &config,
-                                &preview_tx,
-                                &mut preview_task,
-                            );
-                        }
-                        continue;
+            {
+                Action::Continue => {
+                    needs_redraw = true;
+                    // Trigger preview update on cursor move or visibility change
+                    if fuzzy_finder.get_cursor_position() != prev_cursor
+                        || preview_state.visible != prev_visible
+                    {
+                        maybe_update_preview(
+                            &fuzzy_finder,
+                            &mut preview_state,
+                            &config,
+                            &preview_tx,
+                            &mut preview_task,
+                        );
                     }
-                    Action::Exit => break,
-                    Action::Select(items) => {
-                        selected_items = items;
-                        break;
-                    }
+                    continue;
+                }
+                Action::Exit => break,
+                Action::Select(items) => {
+                    selected_items = items;
+                    break;
                 }
             }
         }
@@ -865,7 +861,7 @@ async fn run_interactive_tui_with_indicators(
                             false,
                             false,
                         );
-                        if let Some(ref m) = msg {
+                        if let Some(m) = msg.as_deref() {
                             col += screen_buffer.put_str(col, 0, " ", None, None, false, false);
                             screen_buffer.put_str(
                                 col,
@@ -876,7 +872,7 @@ async fn run_interactive_tui_with_indicators(
                                 false,
                                 false,
                             );
-                        } else if let Some(ref m) = config.loading_message {
+                        } else if let Some(m) = config.loading_message.as_deref() {
                             col += screen_buffer.put_str(col, 0, " ", None, None, false, false);
                             screen_buffer.put_str(
                                 col,
@@ -890,7 +886,7 @@ async fn run_interactive_tui_with_indicators(
                         }
                     }
                     GlobalStatus::Ready(msg) => {
-                        if let Some(ref m) = msg {
+                        if let Some(m) = msg.as_deref() {
                             screen_buffer.put_str(
                                 col,
                                 0,
@@ -1036,37 +1032,33 @@ async fn run_interactive_tui_with_indicators(
         }
 
         // Handle input
-        if event::poll(std::time::Duration::from_millis(50))? {
-            if let Event::Key(key_event) = event::read()? {
-                let prev_cursor = fuzzy_finder.get_cursor_position();
-                let prev_visible = preview_state.visible;
-                match events::handle_async_key_event(
-                    &key_event,
-                    &mut fuzzy_finder,
-                    &mut preview_state,
-                )
+        if event::poll(std::time::Duration::from_millis(50))?
+            && let Event::Key(key_event) = event::read()?
+        {
+            let prev_cursor = fuzzy_finder.get_cursor_position();
+            let prev_visible = preview_state.visible;
+            match events::handle_async_key_event(&key_event, &mut fuzzy_finder, &mut preview_state)
                 .await
-                {
-                    Action::Continue => {
-                        needs_redraw = true;
-                        if fuzzy_finder.get_cursor_position() != prev_cursor
-                            || preview_state.visible != prev_visible
-                        {
-                            maybe_update_preview(
-                                &fuzzy_finder,
-                                &mut preview_state,
-                                &config,
-                                &preview_tx,
-                                &mut preview_task,
-                            );
-                        }
-                        continue;
+            {
+                Action::Continue => {
+                    needs_redraw = true;
+                    if fuzzy_finder.get_cursor_position() != prev_cursor
+                        || preview_state.visible != prev_visible
+                    {
+                        maybe_update_preview(
+                            &fuzzy_finder,
+                            &mut preview_state,
+                            &config,
+                            &preview_tx,
+                            &mut preview_task,
+                        );
                     }
-                    Action::Exit => break,
-                    Action::Select(items) => {
-                        selected_items = items;
-                        break;
-                    }
+                    continue;
+                }
+                Action::Exit => break,
+                Action::Select(items) => {
+                    selected_items = items;
+                    break;
                 }
             }
         }

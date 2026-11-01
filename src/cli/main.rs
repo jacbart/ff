@@ -1,13 +1,13 @@
 use std::env;
 use std::fs;
 
-use crate::cli::planner::{plan_cli_action, CliAction};
+use crate::cli::planner::{CliAction, plan_cli_action};
 use crate::cli::tty::check_tty_requirements;
 use crate::get_build_info;
 use crate::help;
 use crate::input::{read_input, read_piped_stdin, reopen_stdin_from_tty, send_input_to_channel};
-use crate::tui::ui::{create_items_channel, run_tui_with_config};
 use crate::tui::TuiConfig;
+use crate::tui::ui::{create_items_channel, run_tui_with_config};
 
 /// Read items from a file.
 pub fn read_items_from_file(file_path: &str) -> Result<Vec<String>, String> {

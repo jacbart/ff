@@ -1,3 +1,18 @@
+## [Unreleased]
+
+### 🚜 Refactor
+
+- Pin Rust 1.99.0 in `rust-toolchain.toml` (single source of truth) and read it from `flake.nix`
+- Migrate the crate to edition 2024
+- Add `docs/ARCHITECTURE.md` and `AGENTS.md`
+- Enforce a 1 MiB binary budget with `scripts/check-size.sh`, a Nix check, and CI
+- Correct stale LSH/quicksort claims in the library docs
+
+### ⚙️ Miscellaneous Tasks
+
+- Update flake inputs (nixpkgs 26.11, rust-overlay); drop the `x86_64-darwin`
+  target, which nixpkgs 26.11 no longer supports
+
 ## [1.0.13] - 2026-02-23
 
 ### 🚜 Refactor
