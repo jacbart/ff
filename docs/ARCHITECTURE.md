@@ -268,7 +268,7 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 
 ## 9. Testing
 
-- `cargo test` — 262 tests: 190 unit, 64 integration across
+- `cargo test` — 263 tests: 190 unit, 65 integration across
   `tests/{cli,fuzzy,input}_integration_tests.rs`, 8 doc-tests.
 - `tests/cli_integration_tests.rs` also drives the compiled binary through
   `CARGO_BIN_EXE_ff`, so `--filter`, exit codes, and flag parsing are covered

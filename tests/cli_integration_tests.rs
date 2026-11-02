@@ -192,3 +192,42 @@ fn unknown_flags_are_rejected() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("Unknown flag: --bogus"), "stderr: {stderr}");
 }
+
+#[test]
+fn filter_mode_exits_cleanly_when_stdout_closes_early() {
+    // `ff --filter … | head` closes the pipe early. Writing to it must not
+    // panic with "failed printing to stdout".
+    let dir = TempDir::new().unwrap();
+    let path = dir.path().join("many.txt");
+    let contents: String = (0..200_000).map(|i| format!("match{i}\n")).collect();
+    fs::write(&path, contents).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_ff"))
+        .args(["--filter", "match", &path.to_string_lossy()])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("failed to spawn ff");
+
+    {
+        use std::io::Read;
+        let stdout = child.stdout.as_mut().expect("stdout");
+        let mut buf = [0u8; 64];
+        let _ = stdout.read(&mut buf);
+    }
+    // Drop the read end so the next write hits EPIPE.
+    drop(child.stdout.take());
+
+    let output = child.wait_with_output().expect("wait for ff");
+    assert!(
+        output.status.success(),
+        "exit status: {:?}, stderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "unexpected stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}

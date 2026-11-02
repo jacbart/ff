@@ -1,5 +1,6 @@
 use std::env;
 use std::fs;
+use std::io::Write;
 use std::path::Path;
 
 use crate::cli::planner::{CliAction, InputSpec, RunOptions, plan_cli_action};
@@ -125,22 +126,40 @@ fn boxed_error(message: impl Into<String>) -> Box<dyn std::error::Error> {
     ))
 }
 
+/// Write results through a buffered stdout, treating a closed pipe as success.
+///
+/// `ff --filter … | head` closes the read end early; `println!` would panic with
+/// "failed printing to stdout" instead of exiting quietly.
+fn with_stdout<F>(write: F) -> Result<(), Box<dyn std::error::Error>>
+where
+    F: FnOnce(&mut dyn std::io::Write) -> std::io::Result<()>,
+{
+    let stdout = std::io::stdout();
+    let mut out = std::io::BufWriter::new(stdout.lock());
+    match write(&mut out).and_then(|()| out.flush()) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == std::io::ErrorKind::BrokenPipe => Ok(()),
+        Err(err) => Err(Box::new(err)),
+    }
+}
+
 /// Print one result, honouring `--line-number`.
 fn print_item(
+    out: &mut dyn std::io::Write,
     item: Option<&str>,
     original_index: usize,
     line_number: bool,
     source_file: Option<&str>,
-) {
+) -> std::io::Result<()> {
     if !line_number {
         if let Some(item) = item {
-            println!("{item}");
+            writeln!(out, "{item}")?;
         }
-        return;
+        return Ok(());
     }
     match source_file {
-        Some(file) => println!("{}:{}", file, original_index + 1),
-        None => println!("{}", original_index + 1),
+        Some(file) => writeln!(out, "{}:{}", file, original_index + 1),
+        None => writeln!(out, "{}", original_index + 1),
     }
 }
 
@@ -198,10 +217,12 @@ fn run_tui(input: InputSpec, options: RunOptions) -> Result<(), Box<dyn std::err
             .map_err(|e| e as Box<dyn std::error::Error>)
     })?;
 
-    for (index, item) in selected {
-        print_item(Some(&item), index, line_number, source_file.as_deref());
-    }
-    Ok(())
+    with_stdout(|out| {
+        for (index, item) in selected {
+            print_item(out, Some(&item), index, line_number, source_file.as_deref())?;
+        }
+        Ok(())
+    })
 }
 
 /// Non-interactive filter mode: print every match, exit 1 when nothing matches.
@@ -230,27 +251,26 @@ fn run_filter(
         std::process::exit(1);
     }
 
-    for (position, item) in matches.iter().enumerate() {
-        let original_index = finder.get_original_index(position).unwrap_or(position);
-        print_item(
-            Some(item),
-            original_index,
-            line_number,
-            source_file.as_deref(),
-        );
-    }
-
-    Ok(())
+    with_stdout(|out| {
+        for (position, item) in matches.iter().enumerate() {
+            let original_index = finder.get_original_index(position).unwrap_or(position);
+            print_item(
+                out,
+                Some(item),
+                original_index,
+                line_number,
+                source_file.as_deref(),
+            )?;
+        }
+        Ok(())
+    })
 }
 
 /// Run the CLI application.
 pub fn cli_main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
     match plan_cli_action(&args) {
-        CliAction::ShowVersion => {
-            println!("{}", get_build_info());
-            Ok(())
-        }
+        CliAction::ShowVersion => with_stdout(|out| writeln!(out, "{}", get_build_info())),
         CliAction::ShowHelp => {
             help::print_usage();
             Ok(())

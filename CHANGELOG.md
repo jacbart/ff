@@ -4,6 +4,9 @@
 
 - Freeze on more than 1000 input items: `ItemStream` mirrored every item into an
   undrained channel and blocked forever once it filled
+- `ff --filter … | head` panicked with "failed printing to stdout" when the
+  reader closed early; a broken pipe now exits quietly
+  (`ff --version | head -1` included)
 
 ### 🚀 Features
 
