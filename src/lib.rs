@@ -24,14 +24,45 @@
 //!     assert_eq!(filtered.len(), 1);
 //! }
 //! ```
+//!
+//! ## Crate features
+//!
+//! The crate is split so embedders only pay for what they use. The default
+//! feature is `cli`, which is everything the `ff` binary needs.
+//!
+//! | Feature | Enables | Additional dependencies |
+//! |---|---|---|
+//! | *(none)* | [`FuzzyFinder`] and the scoring API | none |
+//! | `tui` | [`run_tui`], [`TuiConfig`], previews | `crossterm`, `tokio` |
+//! | `input` | `ff::input`: file, directory, stdin, socket, HTTP sources | `libc`, `tokio` |
+//! | `cli` | [`cli_main`], the argument parser | `tui` + `input` |
+//!
+//! ```toml
+//! # Scorer only, no terminal code, no dependencies:
+//! ff = { version = "1", default-features = false }
+//!
+//! # Embed the TUI, but feed it your own items:
+//! ff = { version = "1", default-features = false, features = ["tui"] }
+//! ```
 
 // === Internal Modules ===
+
+/// Command line planning and execution. Requires the `cli` feature.
+#[cfg(feature = "cli")]
 pub mod cli;
 pub mod fuzzy;
+/// Usage text for the command line tool. Requires the `cli` feature.
+#[cfg(feature = "cli")]
 pub mod help;
+/// Item sources: files, directories, stdin, unix sockets and HTTP.
+/// Requires the `input` feature.
+#[cfg(feature = "input")]
 pub mod input;
+/// Interactive terminal UI. Requires the `tui` feature.
+#[cfg(feature = "tui")]
 pub mod tui;
 
+#[cfg(feature = "tui")]
 use tokio::sync::mpsc;
 
 // === Public API Exports ===
@@ -69,6 +100,7 @@ pub use fuzzy::FuzzyFinder;
 /// # Returns
 /// - `Ok(selected_items)`: The list of selected items (index, content) (empty if none selected)
 /// - `Err(e)`: An error occurred during TUI operation
+#[cfg(feature = "tui")]
 pub use tui::run_tui;
 
 /// Run an interactive TUI with custom configuration for height and display mode.
@@ -81,12 +113,14 @@ pub use tui::run_tui;
 /// # Returns
 /// - `Ok(selected_items)`: The list of selected items (index, content) (empty if none selected)
 /// - `Err(e)`: An error occurred during TUI operation
+#[cfg(feature = "tui")]
 pub use tui::run_tui_with_config;
 
 /// Create an mpsc channel for sending items to the TUI.
 ///
 /// # Returns
 /// - `(sender, receiver)`: A tuple containing the sender and receiver for the channel
+#[cfg(feature = "tui")]
 pub use tui::create_items_channel;
 
 /// Configuration for TUI display mode and height.
@@ -96,6 +130,7 @@ pub use tui::create_items_channel;
 /// use ff::TuiConfig;
 /// let config = TuiConfig::with_height(10);
 /// ```
+#[cfg(feature = "tui")]
 pub use tui::TuiConfig;
 
 /// Per-item indicator that can be displayed alongside items.
@@ -107,6 +142,7 @@ pub use tui::TuiConfig;
 /// let success = ItemIndicator::Success;
 /// let custom = ItemIndicator::Text("*".to_string());
 /// ```
+#[cfg(feature = "tui")]
 pub use tui::ItemIndicator;
 
 /// Global status indicator for the TUI prompt line.
@@ -117,6 +153,7 @@ pub use tui::ItemIndicator;
 /// let loading = GlobalStatus::Loading(Some("Searching...".to_string()));
 /// let ready = GlobalStatus::Ready(Some("Done".to_string()));
 /// ```
+#[cfg(feature = "tui")]
 pub use tui::GlobalStatus;
 
 /// Commands that can be sent to update the TUI state dynamically.
@@ -128,9 +165,11 @@ pub use tui::GlobalStatus;
 /// let cmd_with_indicator = TuiCommand::AddItemWithIndicator("item".to_string(), ItemIndicator::Spinner);
 /// let update = TuiCommand::UpdateIndicator("item".to_string(), ItemIndicator::Success);
 /// ```
+#[cfg(feature = "tui")]
 pub use tui::TuiCommand;
 
 /// Create an mpsc channel for sending commands (items with indicators) to the TUI.
+#[cfg(feature = "tui")]
 pub use tui::create_command_channel;
 
 /// Run an interactive TUI with command channel support for per-item indicators.
@@ -145,18 +184,23 @@ pub use tui::create_command_channel;
 /// # Returns
 /// - `Ok(selected_items)`: The list of selected items (index, content) (empty if none selected)
 /// - `Err(e)`: An error occurred during TUI operation
+#[cfg(feature = "tui")]
 pub use tui::run_tui_with_indicators;
 
 /// Preview state for the fuzzy finder TUI.
+#[cfg(feature = "tui")]
 pub use tui::PreviewState;
 
 /// Result of a preview command execution.
+#[cfg(feature = "tui")]
 pub use tui::PreviewResult;
 
 /// A finished preview run, tagged with the item it describes.
+#[cfg(feature = "tui")]
 pub use tui::PreviewUpdate;
 
 /// Preview rule: command template + optional extension filter.
+#[cfg(feature = "tui")]
 pub use tui::PreviewRule;
 
 /// A session handle for the fuzzy finder, allowing asynchronous item ingestion.
@@ -187,12 +231,15 @@ pub use tui::PreviewRule;
 /// }
 /// ```
 /// Common return type for fuzzy finder sessions.
+#[cfg(feature = "tui")]
 pub type SessionResult = Result<Vec<(usize, String)>, Box<dyn std::error::Error + Send + Sync>>;
 
+#[cfg(feature = "tui")]
 pub struct FuzzyFinderSession {
     sender: mpsc::Sender<String>,
 }
 
+#[cfg(feature = "tui")]
 impl FuzzyFinderSession {
     /// Start a new fuzzy finder session with default configuration.
     ///
@@ -263,10 +310,12 @@ impl FuzzyFinderSession {
 ///     Ok(())
 /// }
 /// ```
+#[cfg(feature = "tui")]
 pub struct FuzzyFinderWithIndicators {
     sender: mpsc::Sender<TuiCommand>,
 }
 
+#[cfg(feature = "tui")]
 impl FuzzyFinderWithIndicators {
     /// Start a new fuzzy finder session with indicator support.
     ///
@@ -415,6 +464,7 @@ fn is_leap_year(year: i64) -> bool {
     year % 4 == 0 && (year % 100 != 0 || year % 400 == 0)
 }
 
+#[cfg(feature = "cli")]
 pub use cli::cli_main;
 
 // === Tests ===

@@ -1,3 +1,5 @@
+#![cfg(feature = "cli")]
+
 use ff::input::{process_file_content, process_stdin_content, read_direct_items, read_input};
 use std::fs;
 use tempfile::TempDir;

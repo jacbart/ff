@@ -1,3 +1,5 @@
+#![cfg(feature = "input")]
+
 use ff::input::read_input;
 
 #[tokio::test]

@@ -15,6 +15,9 @@
 
 ### 🚀 Features
 
+- Cargo features split the crate: `default = ["cli"]`, with `tui`, `input` and
+  the zero-dependency matcher available separately. `ff` compiled with
+  `default-features = false` depends on nothing at all
 - `-f/--filter <QUERY>` prints matches and exits without a TUI, exiting 1 when
   nothing matches
 - Flags may appear before, after, or between inputs; `--` ends flag parsing and
@@ -53,6 +56,10 @@
 
 ### 🗑️ Removed
 
+- Dead `process_items`, `read_items_from_file`, `list_files_in_directory` and
+  `looks_like_file_path`; `planner::resolve_input` replaced them
+- The `tokio/time` feature, which nothing has used since the preview timeout
+  moved to a `std::time::Instant` deadline. The binary shrank by ~16 KiB
 - Unused `ItemStream` stream helpers (`stream`, `filtered_stream`, `process_async`,
   `receive`) and `process_vector_as_stream`
 - `futures` dependency, which was only used by those helpers

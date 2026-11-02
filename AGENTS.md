@@ -31,14 +31,21 @@ nix build                   # builds ./result/bin/ff
 nix flake check             # build + 1 MiB binary-size check
 nix fmt                     # nixfmt-tree
 
-cargo test                  # 270 tests (unit + integration + doc-tests)
+cargo test                  # 257 tests (unit + integration + doc-tests)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release && ./scripts/check-size.sh target/release/ff
+
+# Feature combinations — `fuzzy` must stay free of crossterm/tokio
+cargo check --lib --no-default-features
+cargo check --lib --no-default-features --features tui
+cargo check --lib --no-default-features --features input
+cargo test --no-default-features
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --all-features
 ```
 
-All four gates (fmt, clippy, test, size) must pass before a change is
-considered done.
+All five gates (fmt, clippy, test, size, feature matrix) must pass before a
+change is considered done.
 
 ## Layout at a glance
 
@@ -54,6 +61,12 @@ scripts/           release.sh, check-size.sh
 
 Dependency direction is one-way: `cli → tui → fuzzy`. Do not make `fuzzy`
 depend on `tui` or `crossterm`.
+
+Cargo features mirror that direction: `default = ["cli"]`, `cli = tui + input`,
+`tui = crossterm + tokio(runtime, sync)`, `input = libc + tokio(fs, io, net)`.
+`src/fuzzy/` must compile with `--no-default-features`, i.e. with zero
+dependencies. If you add a dependency to `fuzzy`, the minimal build breaks —
+that is the point, so do not "fix" it by widening a feature.
 
 ## Hard rules
 

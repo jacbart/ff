@@ -33,6 +33,26 @@ embeddable Rust library (`ff` crate). Both share the same engine and TUI.
 Dependency direction is strictly one-way: `bin → cli → tui → fuzzy`, with `input`
 used by `cli` and `tui`-adjacent helpers. `fuzzy` never depends on `tui`.
 
+### 1.1 Cargo features
+
+Modules are gated so an embedding crate only compiles what it uses. The `ff`
+binary enables `cli`, so nothing below changes the binary's build.
+
+| Feature | Modules | Third-party crates |
+|---|---|---|
+| *(none)* | `fuzzy` | none — zero dependencies |
+| `tui` | `tui` | `crossterm`, `tokio` (`rt`, `sync`) |
+| `input` | `input` | `libc`, `tokio` (`fs`, `io-util`, `net`, `sync`) |
+| `cli` | `cli`, `help` (implies `tui` + `input`) | + `tokio` (`rt-multi-thread`, `macros`) |
+
+`fuzzy` is the invariant that makes this work: it imports nothing outside
+itself, which `cargo check --lib --no-default-features` enforces in CI. Adding a
+`crossterm`, `tokio` or `crate::tui` reference to `src/fuzzy/` breaks that build
+immediately.
+
+`src/bin/ff.rs` declares `required-features = ["cli"]`, so a minimal build does
+not try to link a binary whose entry point is compiled out.
+
 ---
 
 ## 2. Execution flow
@@ -198,8 +218,16 @@ MatchTier: Exact > Prefix > Substring > Fuzzy
   `PreviewRule`.
 - Sessions: `FuzzyFinderSession`, `FuzzyFinderWithIndicators`, `SessionResult`.
 
-All of these are unconditional: a library consumer always links `crossterm` and
-`tokio`. Feature-gating the TUI is on the roadmap (see §8).
+All of these are behind a Cargo feature (see §1.1):
+
+- Engine `fuzzy` items — `FuzzyFinder`, `fuzzy::{score_match, score_batch, …}` —
+  are always available and pull in nothing.
+- TUI items (`run_tui`, `TuiConfig`, `TuiCommand`, `PreviewState`, …, and both
+  session handles) require the `tui` feature.
+- `cli_main` requires the `cli` feature.
+
+Default features are `["cli"]`, so `cargo add ff` behaves as before; the split
+only matters to consumers who opt out with `default-features = false`.
 
 ---
 
@@ -254,8 +282,9 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
   (`nix flake check`).
 - Release profile: `opt-level = 3`, `lto = true`, `codegen-units = 1`,
   `panic = "abort"`, `strip = true`.
-- Reference sizes (aarch64-darwin, Rust 1.99.0): ~704 KiB via cargo,
-  ~820 KiB via `nix build`.
+- Reference sizes (aarch64-darwin, Rust 1.99.0): 720 KiB via cargo,
+  884 KiB via `nix build`. Both dropped ~16 KiB in the 1.2 cycle when the
+  `tokio/time` feature stopped being enabled, since nothing uses a timer now.
 - If the budget is exceeded, prefer removing a dependency or trimming `tokio`
   features before changing `opt-level`.
 
@@ -266,10 +295,8 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 | Item | Impact |
 |---|---|
 | `controls::handle_key_event` is superseded by `events::handle_async_key_event` | Dead production code kept alive by its own tests. |
-| Dead public helper `process_items` | Kept alive by its own tests. |
 | `get_filtered_items() -> &[String]` forces a `String` clone per match per keystroke | Removing it needs an index-based or `Arc<str>` API (breaking). |
 | `PreparedItem` duplicates each item as `clean` + `lower` | Roughly 2× memory per item; see §6. |
-| No feature flags | Library users pay for the terminal stack. |
 | Inline mode blocks on a cursor-position (DSR) query | A terminal that never answers makes `--height` hang. |
 | `README`/`lib.rs` used to claim LSH and quicksort | Corrected; scoring uses a tiered stable sort. |
 
@@ -277,8 +304,10 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 
 ## 9. Testing
 
-- `cargo test` — 270 tests: 197 unit, 65 integration across
+- `cargo test` — 257 tests: 184 unit, 65 integration across
   `tests/{cli,fuzzy,input}_integration_tests.rs`, 8 doc-tests.
+- `cargo test --no-default-features` must also pass (78 tests): it is the gate
+  that keeps the matcher free of terminal and network dependencies.
 - `tests/cli_integration_tests.rs` also drives the compiled binary through
   `CARGO_BIN_EXE_ff`, so `--filter`, exit codes, and flag parsing are covered
   end-to-end without a TTY.

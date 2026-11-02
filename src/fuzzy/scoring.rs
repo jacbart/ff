@@ -494,7 +494,7 @@ fn strip_ansi_sequences(s: &str) -> String {
 /// items (e.g. from `eza --color=always`) still match correctly.
 ///
 /// This is the convenience entry point for callers that hold raw strings; it
-/// prepares the items on every call. `FuzzyFinder` keeps [`PreparedItem`]s
+/// prepares the items on every call. `FuzzyFinder` keeps the prepared form
 /// around instead, so filtering never redoes this work.
 pub fn score_batch(items: &[String], query: &str) -> Vec<(usize, MatchResult)> {
     let prepared: Vec<PreparedItem> = items.iter().map(|item| PreparedItem::new(item)).collect();
