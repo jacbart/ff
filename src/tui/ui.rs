@@ -4,7 +4,7 @@ use crate::tui::controls::Action;
 use crate::tui::events;
 use crate::tui::layout;
 use crate::tui::preview::{
-    PreviewResult, PreviewState, build_preview_command, parse_ansi_output,
+    PreviewState, PreviewTask, PreviewUpdate, build_preview_command, parse_ansi_output,
     render_preview_to_buffer, spawn_preview_task,
 };
 use crossterm::{
@@ -310,8 +310,8 @@ async fn run_event_loop(
     if config.preview_auto && !config.preview_rules.is_empty() {
         preview_state.visible = true;
     }
-    let (preview_tx, preview_rx) = std::sync::mpsc::channel::<PreviewResult>();
-    let mut preview_task: Option<tokio::task::JoinHandle<()>> = None;
+    let (preview_tx, preview_rx) = std::sync::mpsc::channel::<PreviewUpdate>();
+    let mut preview_task: Option<PreviewTask> = None;
 
     // Spinner animation state
     let mut spinner_frame: usize = 0;
@@ -380,8 +380,8 @@ async fn run_event_loop(
         }
 
         // Drain preview results
-        if let Ok(result) = preview_rx.try_recv() {
-            preview_state.apply_result(result);
+        if let Ok(update) = preview_rx.try_recv() {
+            preview_state.apply_result(update);
             needs_redraw = true;
         }
 
@@ -711,8 +711,8 @@ fn maybe_update_preview(
     fuzzy_finder: &FuzzyFinder,
     preview_state: &mut PreviewState,
     config: &TuiConfig,
-    preview_sender: &std::sync::mpsc::Sender<PreviewResult>,
-    preview_task: &mut Option<tokio::task::JoinHandle<()>>,
+    preview_sender: &std::sync::mpsc::Sender<PreviewUpdate>,
+    preview_task: &mut Option<PreviewTask>,
 ) {
     if !preview_state.visible || config.preview_rules.is_empty() {
         return;
@@ -726,7 +726,8 @@ fn maybe_update_preview(
         return;
     }
     if let Some(task) = preview_task.take() {
-        task.abort();
+        // Kills the child process; `abort()` alone cannot stop a blocking task.
+        task.cancel();
     }
     preview_state.start_loading(&item);
     if !preview_state.loading {
@@ -740,7 +741,7 @@ fn maybe_update_preview(
         return;
     }
     let sender = preview_sender.clone();
-    let task = spawn_preview_task(cmd, sender);
+    let task = spawn_preview_task(item.clone(), cmd, sender);
     *preview_task = Some(task);
 }
 

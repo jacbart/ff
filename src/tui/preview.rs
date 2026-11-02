@@ -70,6 +70,24 @@ pub enum PreviewResult {
     Error(String),
 }
 
+/// A finished preview run, tagged with the item it describes.
+///
+/// Results arrive asynchronously and can outlive the cursor position that
+/// asked for them, so they carry their item and are dropped when stale.
+#[derive(Debug, Clone)]
+pub struct PreviewUpdate {
+    /// Item the preview was rendered for
+    pub item: String,
+    /// Result of the command
+    pub result: PreviewResult,
+}
+
+/// How long a preview command may run before it is killed.
+///
+/// The pane is cosmetic: a command that hangs (a FIFO, a network path, a
+/// runaway process) must never pin a worker or block cursor movement.
+pub const PREVIEW_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// A line of styled text segments
 pub type StyledLine = Vec<(String, Option<Color>, Option<Color>, bool, bool)>;
 
@@ -134,10 +152,16 @@ impl PreviewState {
         }
     }
 
-    /// Apply result from command execution
-    pub fn apply_result(&mut self, result: PreviewResult) {
+    /// Apply a finished preview run.
+    ///
+    /// Results for an item that is no longer selected are dropped: a slow
+    /// command must not overwrite the pane after the cursor has moved on.
+    pub fn apply_result(&mut self, update: PreviewUpdate) {
+        if update.item != self.current_item {
+            return;
+        }
         self.loading = false;
-        match result {
+        match update.result {
             PreviewResult::Success(lines) => {
                 self.lines = lines.clone();
                 self.cache.insert(self.current_item.clone(), lines);
@@ -188,36 +212,156 @@ pub fn inject_color_flag(cmd: &str) -> String {
     }
 }
 
-/// Spawn a preview command in a blocking task and send results back
+/// Handle to a running preview command.
+///
+/// Dropping it cancels the run: the worker notices within a few milliseconds,
+/// kills the child process, and does not send a result. This exists because
+/// `JoinHandle::abort` cannot stop a `spawn_blocking` task, which is how the
+/// preview used to be run — every cursor move could orphan a `sh -c` child.
+pub struct PreviewTask {
+    cancel: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    handle: tokio::task::JoinHandle<()>,
+}
+
+impl PreviewTask {
+    /// Ask the worker to stop. Equivalent to dropping the handle, but leaves the
+    /// handle usable for bookkeeping.
+    pub fn cancel(&self) {
+        self.cancel
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+impl Drop for PreviewTask {
+    fn drop(&mut self) {
+        self.cancel();
+        self.handle.abort();
+    }
+}
+
+/// Run a preview command and send the result back, tagged with its item.
+///
+/// The command is killed when the returned handle is dropped, or when
+/// [`PREVIEW_TIMEOUT`] elapses.
 pub fn spawn_preview_task(
+    item: String,
     command: String,
-    sender: std::sync::mpsc::Sender<PreviewResult>,
-) -> tokio::task::JoinHandle<()> {
+    sender: std::sync::mpsc::Sender<PreviewUpdate>,
+) -> PreviewTask {
     let command = inject_color_flag(&command);
-    tokio::task::spawn_blocking(move || {
-        let output = if cfg!(target_os = "windows") {
-            std::process::Command::new("cmd")
-                .args(["/C", &command])
-                .output()
-        } else {
-            std::process::Command::new("sh")
-                .args(["-c", &command])
-                .output()
-        };
-        let result = match output {
-            Ok(out) => {
-                if out.status.success() {
-                    let text = String::from_utf8_lossy(&out.stdout);
-                    PreviewResult::Success(parse_ansi_output(&text))
-                } else {
-                    let err = String::from_utf8_lossy(&out.stderr);
-                    PreviewResult::Error(err.to_string())
-                }
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let worker_cancel = std::sync::Arc::clone(&cancel);
+
+    let handle = tokio::task::spawn_blocking(move || {
+        if let Some(result) = run_preview_command(&command, PREVIEW_TIMEOUT, &worker_cancel) {
+            let _ = sender.send(PreviewUpdate { item, result });
+        }
+    });
+
+    PreviewTask { cancel, handle }
+}
+
+/// Execute `command` through the platform shell.
+///
+/// Returns `None` when the run was cancelled. The child is polled every few
+/// milliseconds so cancellation and the timeout are both honoured while its
+/// output is being drained by reader threads (a full pipe would otherwise
+/// deadlock the wait).
+pub(crate) fn run_preview_command(
+    command: &str,
+    timeout: std::time::Duration,
+    cancel: &std::sync::atomic::AtomicBool,
+) -> Option<PreviewResult> {
+    let child = if cfg!(target_os = "windows") {
+        let mut cmd = std::process::Command::new("cmd");
+        cmd.arg("/C");
+        cmd
+    } else {
+        let mut cmd = std::process::Command::new("sh");
+        cmd.arg("-c");
+        cmd
+    }
+    .arg(command)
+    .stdin(std::process::Stdio::null())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn();
+
+    let mut child = match child {
+        Ok(child) => child,
+        Err(err) => return Some(PreviewResult::Error(err.to_string())),
+    };
+
+    let stdout_reader = child.stdout.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut pipe, &mut buf);
+            buf
+        })
+    });
+    let stderr_reader = child.stderr.take().map(|mut pipe| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut pipe, &mut buf);
+            buf
+        })
+    });
+
+    let deadline = std::time::Instant::now() + timeout;
+    let mut timed_out = false;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Some(status),
+            Ok(None) => {}
+            Err(err) => {
+                let _ = child.kill();
+                return Some(PreviewResult::Error(err.to_string()));
             }
-            Err(e) => PreviewResult::Error(e.to_string()),
-        };
-        let _ = sender.send(result);
-    })
+        }
+
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = child.kill();
+            // Reap the child so cancellation cannot leave zombies behind.
+            let _ = child.wait();
+            // Reader threads are not joined: a grandchild may still hold the pipes.
+            return None;
+        }
+
+        if std::time::Instant::now() >= deadline {
+            timed_out = true;
+            let _ = child.kill();
+            let _ = child.wait();
+            break None;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    };
+
+    if timed_out {
+        return Some(PreviewResult::Error(format!(
+            "preview command timed out after {}s",
+            timeout.as_secs()
+        )));
+    }
+
+    let stdout = stdout_reader
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+    let stderr = stderr_reader
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default();
+
+    match status {
+        Some(status) if status.success() => Some(PreviewResult::Success(parse_ansi_output(
+            &String::from_utf8_lossy(&stdout),
+        ))),
+        Some(_) => Some(PreviewResult::Error(
+            String::from_utf8_lossy(&stderr).to_string(),
+        )),
+        None => Some(PreviewResult::Error(
+            "preview command produced no exit status".to_string(),
+        )),
+    }
 }
 
 /// Parse ANSI-encoded text into styled lines
@@ -742,5 +886,136 @@ mod tests {
         let cmd = build_preview_command("foo.md", &rules);
         // Since foo.md doesn't exist, auto returns ""
         assert_eq!(cmd, "");
+    }
+
+    #[test]
+    fn test_apply_result_ignores_stale_item() {
+        let mut state = PreviewState::new();
+        state.start_loading("a.rs");
+        assert!(state.loading);
+
+        state.apply_result(PreviewUpdate {
+            item: "b.rs".to_string(),
+            result: PreviewResult::Success(vec![vec![(
+                "stale".to_string(),
+                None,
+                None,
+                false,
+                false,
+            )]]),
+        });
+
+        assert!(state.loading, "a stale result must not clear loading");
+        assert!(state.lines.is_empty());
+        assert!(!state.cache.contains_key("b.rs"));
+        assert_eq!(state.current_item, "a.rs");
+    }
+
+    #[test]
+    fn test_apply_result_updates_lines_and_cache() {
+        let mut state = PreviewState::new();
+        state.start_loading("a.rs");
+
+        state.apply_result(PreviewUpdate {
+            item: "a.rs".to_string(),
+            result: PreviewResult::Success(vec![vec![(
+                "fresh".to_string(),
+                None,
+                None,
+                false,
+                false,
+            )]]),
+        });
+
+        assert!(!state.loading);
+        assert_eq!(state.lines[0][0].0, "fresh");
+        assert!(state.cache.contains_key("a.rs"));
+        assert!(state.error.is_none());
+    }
+
+    fn not_cancelled() -> std::sync::atomic::AtomicBool {
+        std::sync::atomic::AtomicBool::new(false)
+    }
+
+    #[test]
+    fn test_preview_command_captures_stdout() {
+        let result = run_preview_command(
+            "printf 'one\\ntwo\\n'",
+            std::time::Duration::from_secs(5),
+            &not_cancelled(),
+        );
+
+        match result {
+            Some(PreviewResult::Success(lines)) => {
+                assert_eq!(lines.len(), 2);
+                assert_eq!(lines[0][0].0, "one");
+                assert_eq!(lines[1][0].0, "two");
+            }
+            _ => panic!("expected successful output"),
+        }
+    }
+
+    #[test]
+    fn test_preview_command_reports_failure() {
+        let result = run_preview_command(
+            "exit 3",
+            std::time::Duration::from_secs(5),
+            &not_cancelled(),
+        );
+        assert!(matches!(result, Some(PreviewResult::Error(_))));
+    }
+
+    #[test]
+    fn test_preview_command_times_out() {
+        let result = run_preview_command(
+            "sleep 30",
+            std::time::Duration::from_millis(50),
+            &not_cancelled(),
+        );
+
+        match result {
+            Some(PreviewResult::Error(msg)) => assert!(msg.contains("timed out"), "got: {msg}"),
+            _ => panic!("expected a timeout"),
+        }
+    }
+
+    #[test]
+    fn test_preview_command_is_cancelled_promptly() {
+        let cancel = std::sync::atomic::AtomicBool::new(true);
+        let start = std::time::Instant::now();
+
+        let result = run_preview_command("sleep 30", std::time::Duration::from_secs(30), &cancel);
+
+        assert!(result.is_none(), "a cancelled run produces no result");
+        assert!(
+            start.elapsed() < std::time::Duration::from_secs(2),
+            "cancellation must not wait for the command"
+        );
+    }
+
+    /// Dropping the handle must kill the child, not merely stop waiting for it.
+    #[tokio::test]
+    async fn test_dropping_preview_task_kills_the_command() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let marker = dir.path().join("marker");
+        let (tx, rx) = std::sync::mpsc::channel();
+
+        let task = spawn_preview_task(
+            "item".to_string(),
+            format!("sleep 0.6 && touch {}", marker.display()),
+            tx,
+        );
+        drop(task);
+
+        std::thread::sleep(std::time::Duration::from_millis(1200));
+
+        assert!(
+            !marker.exists(),
+            "the preview command kept running after its handle was dropped"
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "a cancelled preview must not send a result"
+        );
     }
 }

@@ -31,7 +31,7 @@ nix build                   # builds ./result/bin/ff
 nix flake check             # build + 1 MiB binary-size check
 nix fmt                     # nixfmt-tree
 
-cargo test                  # 263 tests (unit + integration + doc-tests)
+cargo test                  # 270 tests (unit + integration + doc-tests)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release && ./scripts/check-size.sh target/release/ff

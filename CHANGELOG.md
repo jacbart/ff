@@ -7,6 +7,11 @@
 - `ff --filter … | head` panicked with "failed printing to stdout" when the
   reader closed early; a broken pipe now exits quietly
   (`ff --version | head -1` included)
+- Preview commands are now killed and reaped when the cursor moves on or after a
+  5 s timeout; `JoinHandle::abort` cannot stop a blocking task, so every cursor
+  move used to leave a `sh -c` child running
+- A preview result that arrives after the cursor moved on is discarded instead of
+  overwriting the pane
 
 ### 🚀 Features
 

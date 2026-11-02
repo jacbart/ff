@@ -153,6 +153,9 @@ pub use tui::PreviewState;
 /// Result of a preview command execution.
 pub use tui::PreviewResult;
 
+/// A finished preview run, tagged with the item it describes.
+pub use tui::PreviewUpdate;
+
 /// Preview rule: command template + optional extension filter.
 pub use tui::PreviewRule;
 

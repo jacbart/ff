@@ -115,12 +115,22 @@ different item:
 ```
 item + rules → build_preview_command()   // {ext} filters, "auto" sentinel, shell escaping
              → inject_color_flag()       // bat/eza/exa get --color=always
-             → spawn_blocking(sh -c …)
+             → spawn_preview_task()      // blocking worker: sh -c … with stdout/stderr drained
              → parse_ansi_output()       // → StyledLine (text, fg, bg, bold, underline)
              → std::sync::mpsc → PreviewState::apply_result / cache
 ```
 
-The previous preview task is aborted when the cursor moves on.
+Lifetime rules:
+
+- The returned `PreviewTask` owns a cancellation flag. Dropping it (cursor moved,
+  TUI exited) makes the worker kill and reap the child within ~5 ms.
+  `JoinHandle::abort` could not do this: blocking tasks cannot be aborted, which
+  is why previews used to leak a process per cursor move.
+- A run is also killed after `PREVIEW_TIMEOUT` (5 s), so a command that hangs on
+  a FIFO or a network path cannot pin a worker.
+- Results are tagged with the item they were rendered for (`PreviewUpdate`);
+  `apply_result` drops anything that no longer matches `current_item`, so a slow
+  command cannot overwrite the pane after the cursor moved on.
 
 ---
 
@@ -260,7 +270,6 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 | `get_filtered_items() -> &[String]` forces a `String` clone per match per keystroke | Removing it needs an index-based or `Arc<str>` API (breaking). |
 | `PreparedItem` duplicates each item as `clean` + `lower` | Roughly 2× memory per item; see §6. |
 | No feature flags | Library users pay for the terminal stack. |
-| Preview cancel is a no-op (`spawn_blocking` + `abort`) and has no timeout | Cursor movement can orphan `sh -c` children. |
 | Inline mode blocks on a cursor-position (DSR) query | A terminal that never answers makes `--height` hang. |
 | `README`/`lib.rs` used to claim LSH and quicksort | Corrected; scoring uses a tiered stable sort. |
 
@@ -268,7 +277,7 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 
 ## 9. Testing
 
-- `cargo test` — 263 tests: 190 unit, 65 integration across
+- `cargo test` — 270 tests: 197 unit, 65 integration across
   `tests/{cli,fuzzy,input}_integration_tests.rs`, 8 doc-tests.
 - `tests/cli_integration_tests.rs` also drives the compiled binary through
   `CARGO_BIN_EXE_ff`, so `--filter`, exit codes, and flag parsing are covered
