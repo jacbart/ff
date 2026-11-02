@@ -65,6 +65,13 @@
 - `futures` dependency, which was only used by those helpers
 - Dead `process_items_async` and `run_async_tui_with_height_validation`
 
+### ⚙️ Miscellaneous Tasks
+
+- CI now checks the feature matrix, builds docs with `-D warnings`, and runs
+  `nix flake check` without `--no-build`, so `checks.binary-size` finally
+  executes there. Actions are pinned to current majors and `actions/checkout`
+  is no longer flagged for the Node 20 deprecation
+
 ## [1.1.0] - 2026-11-01
 
 ### 🐛 Bug Fixes

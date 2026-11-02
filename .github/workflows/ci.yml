@@ -5,24 +5,76 @@ on:
     branches: [main]
   pull_request:
 
+# A superseded push should not keep burning runner minutes.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
 jobs:
   rust:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      # Incremental artifacts are useless on a fresh runner and only slow the
+      # build and the cache down.
+      CARGO_INCREMENTAL: 0
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       # rust-toolchain.toml pins the compiler; the runner's rustup installs it.
       - name: Install pinned toolchain
         run: rustup show
-      - run: cargo fmt --check
-      - run: cargo clippy --locked --all-targets -- -D warnings
-      - run: cargo test --locked
-      - run: cargo build --release --locked
-      - run: ./scripts/check-size.sh target/release/ff
+      - name: Cache cargo registry and target
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy (default features)
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      # The matcher must compile on its own; this is the guard that keeps
+      # crossterm and tokio out of src/fuzzy.
+      - name: Clippy (no default features)
+        run: cargo clippy --locked --lib --no-default-features -- -D warnings
+
+      - name: Feature combinations
+        run: |
+          cargo check --locked --lib --no-default-features
+          cargo check --locked --lib --no-default-features --features tui
+          cargo check --locked --lib --no-default-features --features input
+          cargo check --locked --lib --all-features
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Test (no default features)
+        run: cargo test --locked --no-default-features
+
+      - name: Docs
+        run: cargo doc --locked --no-deps --all-features
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+      - name: Build release
+        run: cargo build --release --locked
+
+      - name: Binary size budget
+        run: ./scripts/check-size.sh target/release/ff
 
   nix:
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v4
-      - uses: DeterminateSystems/nix-installer-action@main
-      - run: nix build --no-link
-      - run: nix flake check --no-build
+      - uses: actions/checkout@v7
+      - uses: DeterminateSystems/nix-installer-action@v23
+      - name: Build
+        run: nix build --no-link
+      # Without --no-build this actually runs checks.<system>.binary-size, which
+      # is the authoritative 1 MiB gate for the packaged binary.
+      - name: Flake checks (includes binary-size)
+        run: nix flake check

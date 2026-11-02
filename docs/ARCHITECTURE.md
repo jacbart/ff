@@ -306,7 +306,7 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 
 - `cargo test` — 257 tests: 184 unit, 65 integration across
   `tests/{cli,fuzzy,input}_integration_tests.rs`, 8 doc-tests.
-- `cargo test --no-default-features` must also pass (78 tests): it is the gate
+- `cargo test --no-default-features` must also pass (80 tests): it is the gate
   that keeps the matcher free of terminal and network dependencies.
 - `tests/cli_integration_tests.rs` also drives the compiled binary through
   `CARGO_BIN_EXE_ff`, so `--filter`, exit codes, and flag parsing are covered
@@ -317,3 +317,8 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 - Interactive behaviours (raw mode, preview, inline height) are not covered by
   automated tests; verify manually with `ff file.txt`, `ls | ff`, `--height 10`,
   and `-p 'cat'`.
+
+`.github/workflows/ci.yml` runs the rust job (fmt, clippy with and without
+default features, the feature matrix, both test runs, docs, release build, size
+gate) and a nix job that builds the package and then runs `nix flake check`,
+which is what actually executes `checks.<system>.binary-size`.
