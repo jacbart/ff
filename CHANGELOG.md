@@ -1,76 +1,66 @@
-## [Unreleased]
-
-### 🐛 Fixed
-
-- Freeze on more than 1000 input items: `ItemStream` mirrored every item into an
-  undrained channel and blocked forever once it filled
-- `ff --filter … | head` panicked with "failed printing to stdout" when the
-  reader closed early; a broken pipe now exits quietly
-  (`ff --version | head -1` included)
-- Preview commands are now killed and reaped when the cursor moves on or after a
-  5 s timeout; `JoinHandle::abort` cannot stop a blocking task, so every cursor
-  move used to leave a `sh -c` child running
-- A preview result that arrives after the cursor moved on is discarded instead of
-  overwriting the pane
+## [1.2.0] - 2026-11-02
 
 ### 🚀 Features
 
-- Cargo features split the crate: `default = ["cli"]`, with `tui`, `input` and
-  the zero-dependency matcher available separately. `ff` compiled with
-  `default-features = false` depends on nothing at all
 - `-f/--filter <QUERY>` prints matches and exits without a TUI, exiting 1 when
   nothing matches
 - Flags may appear before, after, or between inputs; `--` ends flag parsing and
-  a lone `-` reads stdin
-- Unknown flags are rejected instead of being treated as the input source
-- Combined short flags (`-mn`) and inline values (`--height=10`, `-pbat`) work
+  a lone `-` reads stdin. Unknown flags are rejected instead of being taken as
+  the input source, and combined shorts (`-mn`) and inline values
+  (`--height=10`, `-pbat`) work
+- Cargo features split the crate: `default = ["cli"]`, with `tui`, `input` and
+  the zero-dependency matcher available separately. `ff` built with
+  `default-features = false` depends on nothing at all
+
+### 🐛 Bug Fixes
+
+- `ff --filter … | head` panicked with "failed printing to stdout" when the
+  reader closed early; a broken pipe now exits quietly
+- Preview commands are killed and reaped when the cursor moves on or after a 5 s
+  timeout. `JoinHandle::abort` cannot stop a blocking task, so every cursor move
+  used to leave its `sh -c` child running
+- A preview result that arrives after the cursor moved on is discarded instead
+  of overwriting the pane
 
 ### ⚡ Performance
 
 - Filtering no longer strips ANSI sequences or lowercases every item on every
   keystroke: `ItemStream` precomputes `clean`/`lower` keys once per item
-- Items are matched from a borrowed slice, so `update_filter` no longer clones
-  the whole corpus before scoring
-- Non-matching items are rejected by an allocation-free subsequence check before
-  any character vector is built
-- The query's characters are collected once per keystroke, not once per item
-- The query cache stores indices and match data, bounded to 16 queries, instead
-  of three cloned vectors per query
+- Items are matched from a borrowed slice and non-matches are rejected by an
+  allocation-free subsequence check, so `update_filter` no longer clones the
+  corpus or builds a char vector per item
+- The query cache is bounded to 16 entries and stores indices plus match data
+  instead of three cloned vectors per query
 - Measured on 100k items: per-keystroke mean 34 ms → 8.5 ms, worst 52 ms → 26 ms
+- Dropping the unused `tokio/time` feature shrank the binary by ~17 KiB,
+  70% of the 1 MiB budget via cargo and 86% via `nix build`
 
 ### 🚜 Refactor
 
 - Collapse the two near-identical interactive loops into one `run_event_loop`
   driven by an `ItemFeed` adapter (plain channel or command channel); `ui.rs`
   drops ~390 lines and one duplicate row renderer
-- Both entry points now share the inline-mode cursor/size fallbacks, so a
-  terminal that cannot report its cursor position falls back to fullscreen
-  instead of failing
-- A producer-set `Ready`/`Custom`/`Hidden` status is no longer overwritten with
-  the configured ready message when the channel closes
 - Split argument handling into `parse_args` (pure) and `resolve_input`
   (positionals + `stdin_piped`), replacing the duplicated TUI action variants
-  with `InputSpec::{Stdin,Source,Items}`
-- Explicit inputs now win over piped stdin, so `ff file.txt` behaves the same in
-  a pipeline
+  with `InputSpec::{Stdin,Source,Items}`; explicit inputs now win over piped
+  stdin
+
+### ⚙️ Miscellaneous Tasks
+
+- CI checks the feature matrix, builds docs with `-D warnings`, and runs
+  `nix flake check` without `--no-build`, so `checks.binary-size` finally
+  executes there
+- `actions/checkout` is pinned to v7 and nix-installer-action to v23, which
+  clears the Node 20 deprecation warning on every run
 
 ### 🗑️ Removed
 
 - Dead `process_items`, `read_items_from_file`, `list_files_in_directory` and
   `looks_like_file_path`; `planner::resolve_input` replaced them
-- The `tokio/time` feature, which nothing has used since the preview timeout
-  moved to a `std::time::Instant` deadline. The binary shrank by ~16 KiB
-- Unused `ItemStream` stream helpers (`stream`, `filtered_stream`, `process_async`,
-  `receive`) and `process_vector_as_stream`
-- `futures` dependency, which was only used by those helpers
-- Dead `process_items_async` and `run_async_tui_with_height_validation`
-
-### ⚙️ Miscellaneous Tasks
-
-- CI now checks the feature matrix, builds docs with `-D warnings`, and runs
-  `nix flake check` without `--no-build`, so `checks.binary-size` finally
-  executes there. Actions are pinned to current majors and `actions/checkout`
-  is no longer flagged for the Node 20 deprecation
+- The `tokio/time` feature, unused since the preview timeout moved to a
+  `std::time::Instant` deadline
+- `futures`, which was only used by `ItemStream` helpers that were themselves
+  unused
 
 ## [1.1.0] - 2026-11-01
 
