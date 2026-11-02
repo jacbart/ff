@@ -55,6 +55,28 @@ pub struct MatchResult {
     pub tier: MatchTier,
 }
 
+/// An item with its search keys precomputed.
+///
+/// Both keys depend only on the item, never on the query, so they are computed
+/// once when the item arrives. The filter path used to strip ANSI sequences and
+/// lowercase every item again on every keystroke.
+#[derive(Debug, Clone)]
+pub(crate) struct PreparedItem {
+    /// ANSI escape sequences stripped: the text that is matched and highlighted
+    pub(crate) clean: String,
+    /// Lowercase of `clean`, used for matching
+    pub(crate) lower: String,
+}
+
+impl PreparedItem {
+    /// Precompute the search keys for `raw`.
+    pub(crate) fn new(raw: &str) -> Self {
+        let clean = strip_ansi_sequences(raw);
+        let lower = clean.to_lowercase();
+        Self { clean, lower }
+    }
+}
+
 /// Check if a character is a word boundary indicator
 #[inline]
 fn is_boundary_char(c: char) -> bool {
@@ -97,6 +119,17 @@ pub fn score_match_with_original(
     item_lower: &str,
     item_original: &str,
     query: &str,
+) -> Option<MatchResult> {
+    let query_chars: Vec<char> = query.chars().collect();
+    score_with_query_chars(item_lower, item_original, query, &query_chars)
+}
+
+/// Score a match, reusing the query's characters across many items.
+fn score_with_query_chars(
+    item_lower: &str,
+    item_original: &str,
+    query: &str,
+    query_chars: &[char],
 ) -> Option<MatchResult> {
     let item = item_lower;
     // Empty query matches everything with score 0
@@ -154,17 +187,39 @@ pub fn score_match_with_original(
         });
     }
 
+    // Cheap rejection: every query character must appear in the item, in order.
+    // This runs before any allocation, and most items reach it only to fail.
+    let mut matched = 0;
+    for ch in item.chars() {
+        if ch == query_chars[matched] {
+            matched += 1;
+            if matched == query_chars.len() {
+                break;
+            }
+        }
+    }
+    if matched < query_chars.len() {
+        return None;
+    }
+
     // Full fuzzy matching with optimal position finding
     let item_chars: Vec<char> = item.chars().collect();
-    let original_chars: Vec<char> = item_original.chars().collect();
-    let query_chars: Vec<char> = query.chars().collect();
+
+    // Boundary detection needs the original casing, but lowercase items (most
+    // paths) are already the same, so avoid the second allocation for them.
+    let original_chars_storage;
+    let original_chars: &[char] = if item_original == item_lower {
+        &item_chars
+    } else {
+        original_chars_storage = item_original.chars().collect::<Vec<char>>();
+        &original_chars_storage
+    };
 
     // Find optimal match positions using DP
-    let positions = find_optimal_positions(&item_chars, &query_chars)?;
+    let positions = find_optimal_positions(&item_chars, query_chars)?;
 
     // Calculate score based on the optimal positions
-    let score =
-        calculate_score_for_positions(&positions, &item_chars, &original_chars, &query_chars);
+    let score = calculate_score_for_positions(&positions, &item_chars, original_chars, query_chars);
 
     Some(MatchResult {
         score: score.min(scores::PREFIX / 2 - 1),
@@ -437,7 +492,20 @@ fn strip_ansi_sequences(s: &str) -> String {
 /// sorted by score descending.
 /// ANSI escape sequences are stripped before matching so that colored
 /// items (e.g. from `eza --color=always`) still match correctly.
+///
+/// This is the convenience entry point for callers that hold raw strings; it
+/// prepares the items on every call. `FuzzyFinder` keeps [`PreparedItem`]s
+/// around instead, so filtering never redoes this work.
 pub fn score_batch(items: &[String], query: &str) -> Vec<(usize, MatchResult)> {
+    let prepared: Vec<PreparedItem> = items.iter().map(|item| PreparedItem::new(item)).collect();
+    score_prepared(&prepared, query)
+}
+
+/// Batch score already-prepared items against a query.
+///
+/// Returns a vector of (index, MatchResult) for items that match,
+/// sorted by tier descending, then score descending, then original index.
+pub(crate) fn score_prepared(items: &[PreparedItem], query: &str) -> Vec<(usize, MatchResult)> {
     if query.is_empty() {
         // Return all items with zero score, preserving order
         return items
@@ -457,14 +525,13 @@ pub fn score_batch(items: &[String], query: &str) -> Vec<(usize, MatchResult)> {
     }
 
     let query_lower = query.to_lowercase();
+    let query_chars: Vec<char> = query_lower.chars().collect();
 
     let mut results: Vec<(usize, MatchResult)> = items
         .iter()
         .enumerate()
         .filter_map(|(idx, item)| {
-            let clean = strip_ansi_sequences(item);
-            let clean_lower = clean.to_lowercase();
-            score_match_with_original(&clean_lower, &clean, &query_lower)
+            score_with_query_chars(&item.lower, &item.clean, &query_lower, &query_chars)
                 .map(|result| (idx, result))
         })
         .collect();

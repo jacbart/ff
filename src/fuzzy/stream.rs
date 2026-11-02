@@ -6,22 +6,51 @@
 //! into an `mpsc` channel that nothing drained, which deadlocked the TUI once
 //! 1000 items had accumulated.
 
+use crate::fuzzy::scoring::PreparedItem;
+
 /// Ordered buffer of items to search through.
 pub struct ItemStream {
     items: Vec<String>,
+    /// Search keys for `items`, in the same order. Kept in lockstep by
+    /// [`ItemStream::add_items`], the only function that mutates either vector.
+    prepared: Vec<PreparedItem>,
 }
 
 impl ItemStream {
     /// Create an empty item stream.
     pub fn new() -> Self {
-        Self { items: Vec::new() }
+        Self {
+            items: Vec::new(),
+            prepared: Vec::new(),
+        }
     }
 
     /// Append items, preserving insertion order.
     ///
-    /// Never blocks: items are appended to the backing buffer only.
+    /// Never blocks: items are appended to the backing buffer only. The search
+    /// keys used by the filter path are computed here, once per item.
     pub fn add_items(&mut self, new_items: Vec<String>) {
+        self.prepared.reserve(new_items.len());
+        for item in &new_items {
+            self.prepared.push(PreparedItem::new(item));
+        }
         self.items.extend(new_items);
+        debug_assert_eq!(self.items.len(), self.prepared.len());
+    }
+
+    /// Borrow all items without copying them.
+    pub fn items(&self) -> &[String] {
+        &self.items
+    }
+
+    /// Borrow one item by original index.
+    pub fn item(&self, index: usize) -> &str {
+        self.items.get(index).map(String::as_str).unwrap_or("")
+    }
+
+    /// Borrow the precomputed search keys, parallel to [`ItemStream::items`].
+    pub(crate) fn prepared(&self) -> &[PreparedItem] {
+        &self.prepared
     }
 
     /// Get all items as an owned vector.
@@ -83,6 +112,26 @@ mod tests {
                 "third".to_string()
             ]
         );
+    }
+
+    #[test]
+    fn test_item_stream_keeps_items_and_prepared_in_lockstep() {
+        let mut stream = ItemStream::new();
+        stream.add_items(vec![
+            "Apple".to_string(),
+            "\x1b[31mBanana\x1b[0m".to_string(),
+        ]);
+        stream.add_items(vec!["Cherry".to_string()]);
+
+        assert_eq!(stream.items().len(), stream.prepared().len());
+        // Search keys are lowercased and ANSI-free regardless of the raw item.
+        assert_eq!(stream.prepared()[0].lower, "apple");
+        assert_eq!(stream.prepared()[1].clean, "Banana");
+        assert_eq!(stream.prepared()[1].lower, "banana");
+        // Raw items keep their escapes for rendering.
+        assert_eq!(stream.item(1), "\x1b[31mBanana\x1b[0m");
+        assert_eq!(stream.item(2), "Cherry");
+        assert_eq!(stream.item(99), "");
     }
 
     #[test]

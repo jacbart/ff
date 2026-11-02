@@ -22,9 +22,24 @@ pub struct FuzzyFinder {
     pub(crate) query_cache: crate::fuzzy::finder::QueryCache,
 }
 
+/// Cached filter result for one query.
+///
+/// Only indices and match data are stored: keeping copies of the matched item
+/// strings made the cache cost a full clone of the result set per keystroke.
+#[derive(Debug, Clone, Default)]
+pub struct CachedQuery {
+    /// Original indices of matching items, in display order
+    pub indices: Vec<usize>,
+    /// Match positions, parallel to `indices`
+    pub matches: Vec<MatchPositions>,
+}
+
 /// Type alias for the fuzzy finder query cache.
-pub type QueryCache =
-    std::collections::HashMap<String, (Vec<String>, Vec<usize>, Vec<MatchPositions>)>;
+pub type QueryCache = std::collections::HashMap<String, CachedQuery>;
+
+/// How many queries to remember. Each entry holds indices plus positions for
+/// every match, so the cache is bounded rather than growing with typed text.
+const MAX_CACHED_QUERIES: usize = 16;
 
 impl FuzzyFinder {
     /// Create a new async fuzzy finder (empty)
@@ -53,10 +68,9 @@ impl FuzzyFinder {
     /// Update the filtered items based on the current query
     pub async fn update_filter(&mut self) {
         if self.query.is_empty() {
-            let all_items = self.stream.get_all_items();
             self.filtered_items = Vec::new();
             self.filtered_indices = Vec::new();
-            for (idx, item) in all_items.iter().enumerate() {
+            for (idx, item) in self.stream.items().iter().enumerate() {
                 if !item.is_empty() {
                     self.filtered_items.push(item.clone());
                     self.filtered_indices.push(idx);
@@ -71,39 +85,42 @@ impl FuzzyFinder {
                 })
                 .collect();
         } else if let Some(cached) = self.query_cache.get(&self.query) {
-            self.filtered_items = cached.0.clone();
-            self.filtered_indices = cached.1.clone();
-            self.match_positions = cached.2.clone();
-        } else {
-            let all_items = self.stream.get_all_items();
-
-            // Use the new scoring module for single-pass matching and scoring
-            let scored_results = scoring::score_batch(&all_items, &self.query);
-
-            // Extract filtered items and match positions (already sorted by score)
-            self.filtered_items = scored_results
+            self.filtered_indices = cached.indices.clone();
+            self.match_positions = cached.matches.clone();
+            self.filtered_items = self
+                .filtered_indices
                 .iter()
-                .map(|(idx, _)| all_items[*idx].clone())
+                .map(|&idx| self.stream.item(idx).to_string())
                 .collect();
+        } else {
+            // Scoring runs over the stored search keys, so no item is cloned or
+            // lowercased until it is known to match.
+            let scored = scoring::score_prepared(self.stream.prepared(), &self.query);
 
-            self.filtered_indices = scored_results.iter().map(|(idx, _)| *idx).collect();
+            self.filtered_items = Vec::with_capacity(scored.len());
+            self.filtered_indices = Vec::with_capacity(scored.len());
+            self.match_positions = Vec::with_capacity(scored.len());
 
-            self.match_positions = scored_results
-                .into_iter()
-                .map(|(_, result)| MatchPositions {
+            for (idx, result) in scored {
+                let item = self.stream.item(idx).to_string();
+                self.filtered_items.push(item);
+                self.filtered_indices.push(idx);
+                self.match_positions.push(MatchPositions {
                     positions: result.positions,
                     score: result.score,
-                })
-                .collect();
+                });
+            }
 
-            // Cache the results
+            // Cache indices and match data only.
+            if self.query_cache.len() >= MAX_CACHED_QUERIES {
+                self.query_cache.clear();
+            }
             self.query_cache.insert(
                 self.query.clone(),
-                (
-                    self.filtered_items.clone(),
-                    self.filtered_indices.clone(),
-                    self.match_positions.clone(),
-                ),
+                CachedQuery {
+                    indices: self.filtered_indices.clone(),
+                    matches: self.match_positions.clone(),
+                },
             );
         }
 

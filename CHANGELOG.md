@@ -14,6 +14,19 @@
 - Unknown flags are rejected instead of being treated as the input source
 - Combined short flags (`-mn`) and inline values (`--height=10`, `-pbat`) work
 
+### ⚡ Performance
+
+- Filtering no longer strips ANSI sequences or lowercases every item on every
+  keystroke: `ItemStream` precomputes `clean`/`lower` keys once per item
+- Items are matched from a borrowed slice, so `update_filter` no longer clones
+  the whole corpus before scoring
+- Non-matching items are rejected by an allocation-free subsequence check before
+  any character vector is built
+- The query's characters are collected once per keystroke, not once per item
+- The query cache stores indices and match data, bounded to 16 queries, instead
+  of three cloned vectors per query
+- Measured on 100k items: per-keystroke mean 34 ms → 8.5 ms, worst 52 ms → 26 ms
+
 ### 🚜 Refactor
 
 - Collapse the two near-identical interactive loops into one `run_event_loop`

@@ -31,7 +31,7 @@ nix build                   # builds ./result/bin/ff
 nix flake check             # build + 1 MiB binary-size check
 nix fmt                     # nixfmt-tree
 
-cargo test                  # 261 tests (unit + integration + doc-tests)
+cargo test                  # 262 tests (unit + integration + doc-tests)
 cargo clippy --all-targets -- -D warnings
 cargo fmt --check
 cargo build --release && ./scripts/check-size.sh target/release/ff
@@ -97,8 +97,10 @@ depend on `tui` or `crossterm`.
   there, never into a second loop.
 - `src/tui/controls.rs::handle_key_event` is legacy; the live path is
   `src/tui/events.rs::handle_async_key_event`.
-- The filter hot path clones and lowercases every item on each keystroke — see
-  `docs/ARCHITECTURE.md` §6 before adding work to `update_filter`.
+- The filter hot path is allocation-free per item but still clones one `String`
+  per *match* to fill `filtered_items` — see `docs/ARCHITECTURE.md` §6 before
+  adding work to `update_filter`. Benchmark with
+  `cargo test --release --test bench_filter -- --ignored --nocapture`.
 - The library has no feature flags yet; any consumer links the full TUI stack.
 
 ## Commits and releases

@@ -136,8 +136,11 @@ filtered_indices: Vec<usize>,     // display position → original index
 match_positions: Vec<MatchPositions>, // highlight spans, parallel to filtered_items
 selected_items: HashSet<usize>,   // keyed by ORIGINAL index
 cursor_position: usize,           // index into filtered_items
-query_cache: HashMap<String, (Vec<String>, Vec<usize>, Vec<MatchPositions>)>,
+query_cache: HashMap<String, CachedQuery>, // indices + matches, bounded to 16 queries
 ```
+
+`ItemStream` holds the raw items plus their precomputed `PreparedItem` search
+keys (`clean`, `lower`), updated together in `add_items` only.
 
 Invariants to preserve:
 
@@ -192,26 +195,40 @@ All of these are unconditional: a library consumer always links `crossterm` and
 
 ## 6. Performance characteristics
 
-Known hot path, executed on every keystroke:
+The hot path is `FuzzyFinder::update_filter`, executed on every keystroke:
 
 ```
 FuzzyFinder::update_filter
-  └─ stream.get_all_items()        // clones every item into a new Vec
-      └─ scoring::score_batch
-           ├─ strip_ansi_sequences(item)   // allocates per item, always
-           ├─ item.to_lowercase()          // allocates per item
-           └─ score_match_with_original
-      └─ clone results into filtered_items + match_positions
-      └─ clone everything again into query_cache
+  └─ stream.prepared()            // &[PreparedItem], no copying
+      └─ scoring::score_prepared
+           ├─ cheap subsequence reject (no allocation) for non-matching items
+           ├─ query lowered + collected to chars once per keystroke
+           └─ score_with_query_chars over precomputed clean/lower keys
+      └─ clone only the matched items into filtered_items (display needs owned strings)
+      └─ cache indices + match data, bounded to 16 queries
 ```
 
-This is the main obstacle to `fzf`-class throughput on 100k+ line inputs.
-Improvements, in order of expected impact:
+What each item costs:
 
-1. Store items once (`Arc<str>` or `Vec<Box<str>>`) and filter by index.
-2. Precompute lowercase / ANSI-stripped keys once per item, not per query.
-3. Return indices from `score_batch` and avoid cloning display strings.
-4. Cap `query_cache` (LRU or clear on threshold).
+- **On arrival** (`ItemStream::add_items`): one ANSI strip and one lowercase,
+  stored alongside the raw item. `items` and `prepared` are updated in exactly
+  one function, so they cannot drift.
+- **On every keystroke**: a slice scan with no per-item allocation. Items that
+  fail the subsequence check exit before any `Vec<char>` is built.
+
+Measured on a 100k-item corpus (`cargo test --release --test bench_filter --
+--ignored --nocapture`, aarch64-darwin): per-keystroke mean dropped from
+**~34 ms** (2026-11 pre-refactor) to **~8.5 ms**, worst case 52 ms → 26 ms; at
+10k items 3.3 ms → 0.8 ms.
+
+Remaining costs, in order:
+
+1. Building `filtered_items` still clones one `String` per match, because the
+   public API returns `&[String]`. Changing that to an index-based accessor (or
+   `Arc<str>`) would remove the clones but is a breaking API change.
+2. The DP in `find_optimal_positions` allocates per matching item; it runs only
+   for items that pass the cheap reject.
+3. Sorting is `O(m log m)` per keystroke over the matches.
 
 Item ingestion itself is O(1) per item and never blocks: `ItemStream` is a
 plain `Vec<String>`. (It used to mirror every item into an `mpsc` channel that
@@ -240,7 +257,8 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 |---|---|
 | `controls::handle_key_event` is superseded by `events::handle_async_key_event` | Dead production code kept alive by its own tests. |
 | Dead public helper `process_items` | Kept alive by its own tests. |
-| Per-keystroke cloning and lowercasing (§6) | Latency on large inputs. |
+| `get_filtered_items() -> &[String]` forces a `String` clone per match per keystroke | Removing it needs an index-based or `Arc<str>` API (breaking). |
+| `PreparedItem` duplicates each item as `clean` + `lower` | Roughly 2× memory per item; see §6. |
 | No feature flags | Library users pay for the terminal stack. |
 | Preview cancel is a no-op (`spawn_blocking` + `abort`) and has no timeout | Cursor movement can orphan `sh -c` children. |
 | Inline mode blocks on a cursor-position (DSR) query | A terminal that never answers makes `--height` hang. |
@@ -250,7 +268,7 @@ The compiled binary must stay below **1 MiB** (`1,048,576` bytes).
 
 ## 9. Testing
 
-- `cargo test` — 261 tests: 189 unit, 64 integration across
+- `cargo test` — 262 tests: 190 unit, 64 integration across
   `tests/{cli,fuzzy,input}_integration_tests.rs`, 8 doc-tests.
 - `tests/cli_integration_tests.rs` also drives the compiled binary through
   `CARGO_BIN_EXE_ff`, so `--filter`, exit codes, and flag parsing are covered
